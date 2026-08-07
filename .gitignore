@@ -9,3 +9,5 @@ coverage/
 .turbo/
 tmp/
 .vitest/
+.cursor/
+.delegate-orch/
