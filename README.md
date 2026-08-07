@@ -52,5 +52,3 @@ bun run test
 bun run build
 bun run check:delegate-pi-assets
 ```
-
-See [docs/design.md](docs/design.md) for the full design.
