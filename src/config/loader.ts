@@ -17,7 +17,7 @@ export function stripJsonc(input: string): string {
       if (escape) escape = false;
       else if (c === "\\") escape = true;
       else if (c === '"') inString = false;
-    20|      i++;
+      i++;
       continue;
     }
     if (c === '"') {
