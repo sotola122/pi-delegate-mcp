@@ -11,3 +11,4 @@ tmp/
 .vitest/
 .cursor/
 .delegate-orch/
+docs/
