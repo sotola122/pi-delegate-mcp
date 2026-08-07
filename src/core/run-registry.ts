@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { AppConfig } from "../config/schema.js";
@@ -186,4 +186,33 @@ export function runToPublic(record: RunRecord): Record<string, unknown> {
     result: record.result,
     poll: "get_run",
   };
+}
+
+/**
+ * On MCP server start, mark persisted running/queued runs as failed.
+ * In-process sessions cannot survive a restart.
+ */
+export function reconcileOrphanedRuns(): number {
+  if (!existsSync(runsDir())) return 0;
+  let count = 0;
+  for (const name of readdirSync(runsDir())) {
+    const p = statusPath(name);
+    if (!existsSync(p)) continue;
+    try {
+      const raw = JSON.parse(readFileSync(p, "utf8")) as PersistedStatus;
+      if (raw.status === "running" || raw.status === "queued") {
+        raw.status = "failed";
+        raw.updatedAt = Date.now();
+        raw.error = {
+          code: "server_restarted",
+          message: "MCP server restarted while run was in progress",
+        };
+        writeFileSync(p, JSON.stringify(raw, null, 2) + "\n", { mode: 0o600 });
+        count++;
+      }
+    } catch {
+      // ignore corrupt status
+    }
+  }
+  return count;
 }

@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AppConfig, ProfileName } from "../../config/schema.js";
-import { runSmokeTest } from "../../pi/smoke.js";
+import { runSmokeTest } from "../../pi-sdk/smoke.js";
 import { resolveProvider } from "../../core/provider.js";
 import {
   startRun,
@@ -414,7 +414,7 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
     {
       title: "Smoke Test",
       description:
-        "Verify Pi CLI connectivity/OAuth/provider without running a real task. Expects stdout OK.",
+        "Verify Pi Coding Agent SDK connectivity, OAuth status, provider, and model availability. Expects stdout OK.",
       inputSchema: smokeInputSchema,
       annotations: annotations.smoke,
     },

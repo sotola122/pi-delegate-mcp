@@ -1,8 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { resolveProvider, loadProviderFile } from "../../src/core/provider.js";
-import { defaultConfig } from "../../src/config/schema.js";
-import { buildPiArgv } from "../../src/pi/argv.js";
-import { getProfile } from "../../src/core/profiles.js";
+import {
+  defaultConfig,
+  migrateConfigV1,
+  ConfigSchema,
+} from "../../src/config/schema.js";
+import { mapProfileToSdkTools } from "../../src/pi-sdk/profile-mapper.js";
+import { evaluateToolCall } from "../../src/pi-sdk/policy-extension.js";
+import { buildSanitizedShellEnvironment } from "../../src/pi-sdk/environment.js";
 import { assemblePrompt } from "../../src/prompt/assembler.js";
 import { serializeTaskBlock } from "../../src/prompt/task-block.js";
 import { redactSecrets } from "../../src/artifacts/redact.js";
@@ -13,10 +18,10 @@ import { isPathInside, resolveWorkspace } from "../../src/workspace/roots.js";
 import { DelegateError } from "../../src/core/errors.js";
 import {
   finalizeStatus,
+  finalizeStatusFromOutcome,
   parseAcceptanceEvidence,
   outputHasHeading,
 } from "../../src/core/result.js";
-import { parseJsonlEvents, jsonModeSucceeded } from "../../src/pi/json-events.js";
 
 describe("effort → thinking", () => {
   const config = defaultConfig();
@@ -49,42 +54,67 @@ describe("effort → thinking", () => {
   });
 });
 
-describe("pi argv", () => {
-  it("never uses shell and includes safety flags", () => {
-    const argv = buildPiArgv({
-      provider: "openai-codex",
-      model: "gpt-5.6-sol",
-      thinking: "medium",
-      profile: getProfile("review"),
-    });
-    expect(argv).toContain("--print");
-    expect(argv).toContain("--no-session");
-    expect(argv).toContain("--no-extensions");
-    expect(argv).toContain("--no-skills");
-    expect(argv).toContain("--no-approve");
-    expect(argv).toContain("--tools");
-    expect(argv.join(" ")).not.toMatch(/bash/);
+describe("sdk profile mapping", () => {
+  it("maps review to read-only tools", () => {
+    const p = mapProfileToSdkTools("review");
+    expect(p.tools).toEqual(["read", "grep", "find", "ls"]);
+    expect(p.excludeTools).toContain("bash");
+    expect(p.noTools).toBe(false);
   });
 
-  it("rejects newline injection in args", () => {
-    expect(() =>
-      buildPiArgv({
-        provider: "openai-codex\n--evil",
-        model: "gpt-5.6-sol",
-        thinking: "medium",
-        profile: getProfile("review"),
-      }),
-    ).toThrow(/Unsafe/);
+  it("maps no-tools", () => {
+    const p = mapProfileToSdkTools("no-tools");
+    expect(p.noTools).toBe(true);
+    expect(p.tools).toEqual([]);
   });
 
-  it("uses --no-tools for judge profile", () => {
-    const argv = buildPiArgv({
-      provider: "openai-codex",
-      model: "gpt-5.6-sol",
-      thinking: "medium",
-      profile: getProfile("no-tools"),
+  it("maps implement with write tools", () => {
+    const p = mapProfileToSdkTools("implement");
+    expect(p.tools).toContain("edit");
+    expect(p.tools).toContain("write");
+    expect(p.tools).toContain("bash");
+  });
+});
+
+describe("policy extension", () => {
+  it("blocks review bash", () => {
+    const d = evaluateToolCall(
+      { profile: "review" },
+      { name: "bash", input: { command: "ls" } },
+    );
+    expect(d.kind).toBe("deny");
+  });
+
+  it("blocks git commit", () => {
+    const d = evaluateToolCall(
+      { profile: "implement", workspace: "/tmp/ws" },
+      { name: "bash", input: { command: "git commit -am x" } },
+    );
+    expect(d.kind).toBe("deny");
+  });
+
+  it("allows review read", () => {
+    const d = evaluateToolCall(
+      { profile: "review", workspace: "/tmp/ws" },
+      { name: "read", input: { path: "/tmp/ws/a.ts" } },
+    );
+    expect(d.kind).toBe("allow");
+  });
+});
+
+describe("shell environment", () => {
+  it("sanitizes env (drops secrets, no PI_*)", () => {
+    const env = buildSanitizedShellEnvironment(defaultConfig(), {
+      PATH: "/usr/bin",
+      HOME: "/home/u",
+      SECRET_TOKEN: "nope",
+      PI_HOME: "/x",
+      GITHUB_TOKEN: "secret",
     });
-    expect(argv).toContain("--no-tools");
+    expect(env.SECRET_TOKEN).toBeUndefined();
+    expect(env.PI_HOME).toBeUndefined();
+    expect(env.GITHUB_TOKEN).toBeUndefined();
+    expect(env.PATH).toBe("/usr/bin");
   });
 });
 
@@ -164,6 +194,27 @@ describe("config", () => {
     }`;
     expect(JSON.parse(stripJsonc(raw))).toEqual({ version: 1 });
   });
+
+  it("defaults to version 2", () => {
+    expect(defaultConfig().version).toBe(2);
+    expect(defaultConfig().sdk.writableToolExecution).toBe("sequential");
+  });
+
+  it("migrates v1 config", () => {
+    const migrated = migrateConfigV1({
+      version: 1,
+      pi: {
+        executable: "pi",
+        provider: "openai-codex",
+        defaultModel: "gpt-5.6-sol",
+        allowedModels: ["gpt-5.6-sol", "gpt-5.6-luna"],
+      },
+      environment: { passThrough: ["IDF_PATH"] },
+    });
+    const parsed = ConfigSchema.parse(migrated);
+    expect(parsed.version).toBe(2);
+    expect(parsed.shellEnvironment.passThrough).toContain("IDF_PATH");
+  });
 });
 
 describe("result validation", () => {
@@ -187,21 +238,18 @@ describe("result validation", () => {
     ], true);
     expect(status).toBe("incomplete");
   });
-});
 
-describe("json events", () => {
-  it("parses jsonl and success signals", () => {
-    const stdout = [
-      '{"type":"agent_end","willRetry":false}',
-      '{"type":"agent_settled"}',
-      '{"type":"message_end","content":"hello"}',
-    ].join("\n");
-    const events = parseJsonlEvents(stdout);
-    expect(jsonModeSucceeded(events, 0)).toBe(true);
-  });
-
-  it("rejects missing agent_end even if settled present", () => {
-    const events = parseJsonlEvents('{"type":"agent_settled"}');
-    expect(jsonModeSucceeded(events, 0)).toBe(false);
+  it("maps sdk completion to status", () => {
+    expect(
+      finalizeStatusFromOutcome({
+        completion: "completed",
+        output: "# Review Result\nok",
+        profile: "review",
+        acceptance: [],
+        requireHeading: true,
+        agentStarted: true,
+        agentEnded: true,
+      }),
+    ).toBe("success");
   });
 });

@@ -4,6 +4,24 @@ export interface AcceptanceEvidence {
   evidence?: string;
 }
 
+export interface AttemptRecord {
+  backend?: "cli" | "sdk" | "fake";
+  sdkVersion?: string;
+  provider?: string;
+  model: string;
+  thinking?: string;
+  completion?: string;
+  agentStarted?: boolean;
+  agentEnded?: boolean;
+  toolCalls?: number;
+  toolFailures?: number;
+  /** @deprecated Use completion instead */
+  exitCode?: number | null;
+  status: string;
+  durationMs: number;
+  error?: { code: string; message: string };
+}
+
 export interface DelegateResult {
   runId: string;
   status: "success" | "incomplete" | "failed" | "cancelled";
@@ -18,12 +36,7 @@ export interface DelegateResult {
   acceptance: AcceptanceEvidence[];
   sideEffects: string[];
   artifacts: Array<{ kind: string; path: string }>;
-  attempts: Array<{
-    model: string;
-    exitCode: number | null;
-    status: string;
-    durationMs: number;
-  }>;
+  attempts: AttemptRecord[];
   durationMs: number;
   code?: string;
   message?: string;
@@ -68,6 +81,40 @@ export function parseAcceptanceEvidence(
   });
 }
 
+export function finalizeStatusFromOutcome(opts: {
+  completion: string;
+  cancelled?: boolean;
+  output: string;
+  profile: string;
+  acceptance: AcceptanceEvidence[];
+  requireHeading: boolean;
+  agentStarted?: boolean;
+  agentEnded?: boolean;
+}): DelegateResult["status"] {
+  if (opts.cancelled || opts.completion === "cancelled") return "cancelled";
+  if (
+    opts.completion === "provider_error" ||
+    opts.completion === "tool_error" ||
+    opts.completion === "timeout" ||
+    opts.completion === "internal_error"
+  ) {
+    return "failed";
+  }
+  if (opts.requireHeading && !outputHasHeading(opts.output, opts.profile)) {
+    return "incomplete";
+  }
+  if (opts.acceptance.length > 0 && opts.acceptance.some((a) => a.status === "unknown")) {
+    return "incomplete";
+  }
+  if (opts.acceptance.some((a) => a.status === "fail")) return "incomplete";
+  if (opts.completion === "incomplete") return "incomplete";
+  if (opts.agentStarted === false || opts.agentEnded === false) {
+    return "incomplete";
+  }
+  return "success";
+}
+
+/** @deprecated Prefer finalizeStatusFromOutcome */
 export function finalizeStatus(
   exitCode: number | null,
   cancelled: boolean,
@@ -76,12 +123,19 @@ export function finalizeStatus(
   acceptance: AcceptanceEvidence[],
   requireHeading: boolean,
 ): DelegateResult["status"] {
-  if (cancelled) return "cancelled";
-  if (exitCode !== 0) return "failed";
-  if (requireHeading && !outputHasHeading(output, profile)) return "incomplete";
-  if (acceptance.length > 0 && acceptance.some((a) => a.status === "unknown")) {
-    return "incomplete";
-  }
-  if (acceptance.some((a) => a.status === "fail")) return "incomplete";
-  return "success";
+  return finalizeStatusFromOutcome({
+    completion:
+      cancelled
+        ? "cancelled"
+        : exitCode !== 0
+          ? "provider_error"
+          : "completed",
+    cancelled,
+    output,
+    profile,
+    acceptance,
+    requireHeading,
+    agentStarted: true,
+    agentEnded: exitCode === 0 && !cancelled,
+  });
 }

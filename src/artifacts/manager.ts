@@ -53,6 +53,7 @@ export function writeArtifact(
   writeFileSync(path, data, { mode: 0o600 });
 }
 
+/** @deprecated CLI stdout/stderr artifacts; prefer saveSdkDiagnostics */
 export function savePiOutputs(
   dirs: RunDirs,
   stdout: string,
@@ -70,6 +71,42 @@ export function savePiOutputs(
     const p = join(dirs.pi, "events.jsonl");
     writeArtifact(p, eventsJsonl);
     artifacts.push({ kind: "events", path: p });
+  }
+  return artifacts;
+}
+
+export function saveSdkDiagnostics(
+  dirs: RunDirs,
+  opts: {
+    eventSummaryJsonl?: string;
+    diagnostics?: unknown;
+    toolSummary?: unknown;
+    finalOutput?: string;
+  },
+): Array<{ kind: string; path: string }> {
+  const artifacts: Array<{ kind: string; path: string }> = [];
+  const sdkDir = join(dirs.root, "sdk");
+  mkdirSync(sdkDir, { recursive: true, mode: 0o700 });
+
+  if (opts.eventSummaryJsonl !== undefined) {
+    const p = join(sdkDir, "event-summary.jsonl");
+    writeArtifact(p, opts.eventSummaryJsonl);
+    artifacts.push({ kind: "sdk.events", path: p });
+  }
+  if (opts.diagnostics !== undefined) {
+    const p = join(sdkDir, "diagnostics.json");
+    writeArtifact(p, JSON.stringify(opts.diagnostics, null, 2) + "\n");
+    artifacts.push({ kind: "sdk.diagnostics", path: p });
+  }
+  if (opts.toolSummary !== undefined) {
+    const p = join(sdkDir, "tool-summary.json");
+    writeArtifact(p, JSON.stringify(opts.toolSummary, null, 2) + "\n");
+    artifacts.push({ kind: "sdk.tools", path: p });
+  }
+  if (opts.finalOutput !== undefined) {
+    const p = join(dirs.result, "output.md");
+    writeArtifact(p, opts.finalOutput);
+    artifacts.push({ kind: "output", path: p });
   }
   return artifacts;
 }

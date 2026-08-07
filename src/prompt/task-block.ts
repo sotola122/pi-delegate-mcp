@@ -14,6 +14,8 @@ export interface TaskBlock {
   orchestration_artifacts?: string[];
   stop_conditions?: string[];
   cli_attachments?: string[];
+  /** Backend-neutral attachment paths (preferred over cli_attachments). */
+  attachments?: string[];
   task_input_paths?: string[];
   delivery?: string;
   modalities?: string[];

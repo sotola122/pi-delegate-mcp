@@ -1,6 +1,6 @@
 import { readFileSync, existsSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
-import { ConfigSchema, defaultConfig, type AppConfig } from "./schema.js";
+import { ConfigSchema, defaultConfig, migrateConfigV1, type AppConfig, type ConfigV1Input } from "./schema.js";
 import { configPath } from "./paths.js";
 import { deepMerge } from "./merge.js";
 
@@ -17,7 +17,7 @@ export function stripJsonc(input: string): string {
       if (escape) escape = false;
       else if (c === "\\") escape = true;
       else if (c === '"') inString = false;
-      i++;
+    20|      i++;
       continue;
     }
     if (c === '"') {
@@ -43,11 +43,28 @@ export function stripJsonc(input: string): string {
   return out;
 }
 
+function normalizeLoadedConfig(parsed: unknown): unknown {
+  if (!parsed || typeof parsed !== "object") return parsed;
+  const obj = parsed as Record<string, unknown>;
+  if (
+    obj.version === 1 ||
+    (obj.environment && !obj.shellEnvironment) ||
+    (obj.pi &&
+      typeof obj.pi === "object" &&
+      "executable" in (obj.pi as object) &&
+      !("agentDir" in (obj.pi as object)) &&
+      obj.version !== 2)
+  ) {
+    return migrateConfigV1(obj as ConfigV1Input);
+  }
+  return parsed;
+}
+
 export function loadConfig(path = configPath()): AppConfig {
   if (!existsSync(path)) return defaultConfig();
   const raw = readFileSync(path, "utf8");
-  const parsed = JSON.parse(stripJsonc(raw)) as unknown;
-  return ConfigSchema.parse(deepMerge(defaultConfig(), parsed));
+  const parsed = normalizeLoadedConfig(JSON.parse(stripJsonc(raw)));
+  return ConfigSchema.parse(deepMerge(defaultConfig(), parsed as object));
 }
 
 export function parseYamlFile<T = unknown>(path: string): T {

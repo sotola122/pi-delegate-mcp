@@ -7,11 +7,12 @@ export default defineConfig({
     index: "src/index.ts",
   },
   format: ["esm"],
-  target: "node20",
+  target: "node22",
   dts: true,
   sourcemap: true,
   clean: true,
   splitting: false,
+  external: ["@earendil-works/pi-coding-agent"],
   async onSuccess() {
     const cliPath = "dist/cli.js";
     const content = readFileSync(cliPath, "utf8");

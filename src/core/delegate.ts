@@ -1,9 +1,7 @@
 import type { AppConfig, Effort, AllowedModel, ProfileName } from "../config/schema.js";
 import { DelegateError } from "./errors.js";
-import { getProfile } from "./profiles.js";
 import { resolveProvider, loadProviderFile } from "./provider.js";
 import {
-  finalizeStatus,
   parseAcceptanceEvidence,
   type DelegateResult,
 } from "./result.js";
@@ -15,14 +13,6 @@ import {
   mergeModalities,
   assertVisionCapableModel,
 } from "../prompt/multimodal.js";
-import { buildPiArgv } from "../pi/argv.js";
-import { resolvePiExecutable } from "../pi/executable.js";
-import { runPi, sanitizeEnv } from "../pi/process.js";
-import {
-  parseJsonlEvents,
-  extractFinalText,
-  jsonModeSucceeded,
-} from "../pi/json-events.js";
 import { resolveWorkspace, validateAttachmentPaths, assertGitRootAllowed } from "../workspace/roots.js";
 import { validateChildSkills } from "../workspace/child-skills.js";
 import { gitRoot, gitIsDirty, gitHead } from "../workspace/git.js";
@@ -39,12 +29,19 @@ import { canApplyDelivery } from "../workspace/scope.js";
 import { acquireLock, type LockHandle } from "../workspace/lock.js";
 import {
   createRunDirs,
-  savePiOutputs,
+  saveSdkDiagnostics,
   saveResultJson,
   maybeSavePrompt,
 } from "../artifacts/manager.js";
 import { redactSecrets } from "../artifacts/redact.js";
 import { join, relative } from "node:path";
+import { getPiExecutor } from "../pi-sdk/factory.js";
+import { mapProfileToSdkTools } from "../pi-sdk/profile-mapper.js";
+import type { PiExecutor, ThinkingLevel } from "../pi-sdk/types.js";
+import {
+  finalizeStatusFromOutcome,
+  type AttemptRecord,
+} from "./result.js";
 
 export interface DelegateRequest {
   profile: ProfileName;
@@ -75,6 +72,8 @@ export interface DelegateRequest {
   config: AppConfig;
   /** Reuse a pre-allocated run directory / id (async MCP). */
   runId?: string;
+  /** Test / advanced injection of Pi executor. */
+  executor?: PiExecutor;
 }
 
 function defaultTimeout(config: AppConfig, profile: ProfileName): number {
@@ -278,9 +277,12 @@ export async function runDelegation(
       useImplementAlternate: req.useImplementAlternate,
     });
     let cancelled = false;
-    let lastExit: number | null = null;
-    let jsonModeUsed = false;
-    let lastJsonSucceeded = true;
+    let lastCompletion = "completed";
+    let lastAgentStarted = true;
+    let lastAgentEnded = true;
+    const piExecutor =
+      req.executor ?? (await getPiExecutor(req.config));
+    const toolProfile = mapProfileToSdkTools(req.profile);
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const useAlternate =
@@ -312,8 +314,6 @@ export async function runDelegation(
         useImplementAlternate: useAlternate && !req.model,
       });
 
-      const profile = getProfile(req.profile);
-
       const task = {
         objective: req.objective,
         profile: req.profile,
@@ -331,6 +331,7 @@ export async function runDelegation(
             : req.profile === "verify"
               ? ["bash"]
               : [],
+        attachments: [...attachments, ...manifestAttachments],
         cli_attachments: [...attachments, ...manifestAttachments],
         delivery: delivery === "none" ? undefined : delivery,
         modalities,
@@ -349,62 +350,85 @@ export async function runDelegation(
       const promptPath = maybeSavePrompt(req.config, dirs, prompt);
       if (promptPath) artifacts.push({ kind: "prompt", path: promptPath });
 
-      const jsonMode = imagePlanned || modalities.includes("vision");
-      const argv = buildPiArgv({
-        provider: lastResolved.provider,
-        model: lastResolved.model,
-        thinking: lastResolved.thinking,
-        profile,
-        attachments: [...attachments, ...manifestAttachments],
-        childSkills,
-        jsonMode,
-      });
-
-      const executable = resolvePiExecutable(req.config.pi.executable);
       const timeoutSec =
         req.timeoutSeconds ?? defaultTimeout(req.config, req.profile);
 
-      const run = await runPi({
-        executable,
-        argv,
-        cwd: execCwd,
-        prompt,
-        env: sanitizeEnv(req.config),
-        timeoutMs: timeoutSec * 1000,
-        maxStdoutBytes: req.config.limits.maxStdoutBytes,
-        maxStderrBytes: req.config.limits.maxStderrBytes,
-        signal: req.signal,
+      const outcome = await piExecutor.execute(
+        {
+          runId: dirs.runId,
+          attempt,
+          cwd: execCwd,
+          profile: req.profile,
+          provider: lastResolved.provider,
+          model: lastResolved.model,
+          thinking: lastResolved.thinking as ThinkingLevel,
+          tools: toolProfile.tools,
+          excludeTools: toolProfile.excludeTools,
+          noTools: toolProfile.noTools,
+          prompt,
+          attachmentPaths: [...attachments, ...manifestAttachments],
+          textAttachments: [],
+          imageAttachments: [],
+          childSkillPaths: childSkills,
+          policy: {
+            profile: req.profile,
+            workspace: execCwd,
+            inScope: req.inScope,
+            outOfScope: req.outOfScope,
+            artifactRoots: [dirs.root, dirs.input, dirs.result],
+            allowedRoots: req.config.workspace.allowedRoots,
+          },
+          timeoutMs: timeoutSec * 1000,
+          config: req.config,
+          structuredCompletion: imagePlanned || modalities.includes("vision"),
+        },
+        req.signal ?? new AbortController().signal,
+      );
+
+      const sdkArts = saveSdkDiagnostics(dirs, {
+        eventSummaryJsonl: outcome.eventsJsonl,
+        diagnostics: outcome.diagnostics,
+        toolSummary: {
+          toolCalls: outcome.toolCalls,
+          count: outcome.toolCalls.length,
+          failures: outcome.toolCalls.filter((t) => t.isError).length,
+        },
+        finalOutput: outcome.finalText,
       });
+      artifacts.push(...sdkArts);
 
-      const piArts = savePiOutputs(dirs, run.stdout, run.stderr, jsonMode ? run.stdout : undefined);
-      artifacts.push(...piArts);
+      lastOutput = outcome.finalText;
+      cancelled = Boolean(outcome.cancelled) || outcome.completion === "cancelled";
+      lastCompletion = outcome.completion;
+      lastAgentStarted = outcome.agentStarted;
+      lastAgentEnded = outcome.agentEnded;
 
-      lastExit = run.exitCode;
-      cancelled = run.cancelled;
-      attempts.push({
-        model: lastResolved.model,
-        exitCode: run.exitCode,
-        status: run.timedOut ? "timeout" : run.cancelled ? "cancelled" : "ok",
-        durationMs: run.durationMs,
-      });
+      const attemptRec: AttemptRecord = {
+        backend: outcome.backend,
+        sdkVersion: outcome.sdkVersion,
+        provider: outcome.model.provider,
+        model: outcome.model.id,
+        thinking: outcome.model.thinking,
+        completion: outcome.completion,
+        agentStarted: outcome.agentStarted,
+        agentEnded: outcome.agentEnded,
+        toolCalls: outcome.toolCalls.length,
+        toolFailures: outcome.toolCalls.filter((t) => t.isError).length,
+        exitCode: outcome.exitCode ?? null,
+        status: outcome.timedOut
+          ? "timeout"
+          : outcome.cancelled
+            ? "cancelled"
+            : outcome.completion,
+        durationMs: outcome.durationMs,
+        error: outcome.error,
+      };
+      attempts.push(attemptRec);
 
-      if (jsonMode) {
-        jsonModeUsed = true;
-        const events = parseJsonlEvents(run.stdout);
-        lastOutput = extractFinalText(events, run.stdout);
-        lastJsonSucceeded = jsonModeSucceeded(events, run.exitCode);
-        if (!lastJsonSucceeded && attempt + 1 < maxAttempts) {
-          continue;
-        }
-      } else {
-        lastOutput = run.stdout;
-      }
-
-      // Retry implement if incomplete
       if (
         req.profile === "implement" &&
         attempt + 1 < maxAttempts &&
-        (run.exitCode !== 0 ||
+        (outcome.completion !== "completed" ||
           !lastOutput.includes("# Implement Result"))
       ) {
         continue;
@@ -416,16 +440,20 @@ export async function runDelegation(
 
     const checks = req.acceptanceChecks ?? [];
     const acceptance = parseAcceptanceEvidence(lastOutput, checks);
-    let status = finalizeStatus(
-      lastExit,
+    let status = finalizeStatusFromOutcome({
+      completion: lastCompletion,
       cancelled,
-      lastOutput,
-      req.profile,
+      output: lastOutput,
+      profile: req.profile,
       acceptance,
-      true,
-    );
-    // JSON mode: require agent_end(!willRetry) + agent_settled for success
-    if (jsonModeUsed && !lastJsonSucceeded && status === "success") {
+      requireHeading: true,
+      agentStarted: lastAgentStarted,
+      agentEnded: lastAgentEnded,
+    });
+    if (
+      lastCompletion === "incomplete" &&
+      status === "success"
+    ) {
       status = "incomplete";
     }
 

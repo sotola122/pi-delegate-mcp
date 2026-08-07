@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { loadConfig } from "../config/loader.js";
 import { registerAllTools } from "./tools/register.js";
+import { reconcileOrphanedRuns } from "../core/run-registry.js";
 
 function uriToPath(uri: string): string {
   if (uri.startsWith("file://")) {
@@ -15,9 +16,10 @@ function uriToPath(uri: string): string {
 
 export async function startMcpServer(): Promise<void> {
   const config = loadConfig();
+  reconcileOrphanedRuns();
   const server = new McpServer({
     name: "pi-delegate-mcp",
-    version: "0.1.0",
+    version: "0.2.0",
   });
 
   let roots: string[] = [];

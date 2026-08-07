@@ -6,18 +6,19 @@ import {
   copyFileSync,
   chmodSync,
 } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
 import { cursorMcpJsonPath } from "../config/paths.js";
-import { resolvePiExecutable } from "../pi/executable.js";
 import { stripJsonc, loadConfig } from "../config/loader.js";
 import { assetsRoot, assetExists } from "../prompt/assets.js";
+import { warnDeprecatedConfig } from "../config/schema.js";
+import { getPiSdkVersion } from "../pi-sdk/version.js";
+import { reconcileOrphanedRuns } from "../core/run-registry.js";
 
 const SERVER_KEY = "pi-delegate";
 
 function resolveNodeExecutable(): string {
-  // Use PATH-resolved "node" rather than pinning process.execPath, which may
-  // point at an ephemeral Cursor Agent runtime that IDEs do not share.
   return "node";
 }
 
@@ -38,7 +39,7 @@ function findOwnCliScript(): string {
 
 export function installCursor(scope: "global" = "global"): void {
   if (scope !== "global") {
-    throw new Error("Only --scope global is supported in v0.1");
+    throw new Error("Only --scope global is supported");
   }
   const path = cursorMcpJsonPath();
   mkdirSync(dirname(path), { recursive: true });
@@ -55,7 +56,7 @@ export function installCursor(scope: "global" = "global"): void {
   try {
     chmodSync(cliScript, 0o755);
   } catch {
-    // best-effort; node invocation does not require +x
+    // best-effort
   }
 
   doc.mcpServers[SERVER_KEY] = {
@@ -71,7 +72,7 @@ export function installCursor(scope: "global" = "global"): void {
 
 export function uninstallCursor(scope: "global" = "global"): void {
   if (scope !== "global") {
-    throw new Error("Only --scope global is supported in v0.1");
+    throw new Error("Only --scope global is supported");
   }
   const path = cursorMcpJsonPath();
   if (!existsSync(path)) {
@@ -101,21 +102,46 @@ export function printConfigCursor(): void {
   console.log(readFileSync(path, "utf8"));
 }
 
+function expandHome(p: string): string {
+  if (p.startsWith("~/")) return join(homedir(), p.slice(2));
+  if (p === "~") return homedir();
+  return p;
+}
+
 export function doctorCommand(): void {
   const issues: string[] = [];
   console.log("pi-delegate-mcp doctor");
   console.log("---");
 
+  const nodeMajor = Number(process.versions.node.split(".")[0]);
+  const nodeOk = nodeMajor >= 22;
+  console.log(`node: ${process.version}${nodeOk ? "" : " (requires >=22.19.0)"}`);
+  if (!nodeOk) issues.push("Node.js >=22.19.0 required");
+
+  console.log(`pi sdk: @earendil-works/pi-coding-agent@${getPiSdkVersion()}`);
+
   try {
     const config = loadConfig();
-    console.log(`config: ok (pi.executable=${config.pi.executable})`);
-    try {
-      const exe = resolvePiExecutable(config.pi.executable);
-      console.log(`pi executable: ${exe}`);
-    } catch (err) {
-      issues.push(err instanceof Error ? err.message : String(err));
-      console.log("pi executable: MISSING");
+    console.log(`config: ok (version=${config.version})`);
+    for (const w of warnDeprecatedConfig(config)) {
+      console.log(`warning: ${w}`);
     }
+    const agentDir = expandHome(config.pi.agentDir ?? "~/.pi/agent");
+    const authPath = config.pi.authPath
+      ? expandHome(config.pi.authPath)
+      : join(agentDir, "auth.json");
+    const modelsPath = config.pi.modelsPath
+      ? expandHome(config.pi.modelsPath)
+      : join(agentDir, "models.json");
+    console.log(`agentDir: ${agentDir}`);
+    console.log(`authPath: ${existsSync(authPath) ? authPath : `${authPath} (missing)`}`);
+    console.log(
+      `modelsPath: ${existsSync(modelsPath) ? modelsPath : `${modelsPath} (missing)`}`,
+    );
+    console.log(
+      `default model: ${config.pi.provider}/${config.pi.defaultModel}`,
+    );
+    console.log(`allowed models: ${config.pi.allowedModels.join(", ")}`);
   } catch (err) {
     issues.push(err instanceof Error ? err.message : String(err));
   }
@@ -141,7 +167,9 @@ export function doctorCommand(): void {
   } else {
     console.log("---");
     console.log(
-      "OK (OAuth is managed by Pi; run smoke_test to verify connectivity)",
+      "OK (OAuth via ModelRuntime; run smoke_test or: pi-delegate-mcp auth status)",
     );
   }
 }
+
+export { reconcileOrphanedRuns };

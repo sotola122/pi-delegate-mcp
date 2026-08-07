@@ -14,16 +14,51 @@ export const ProfileNameSchema = z.enum([
 ]);
 export type ProfileName = z.infer<typeof ProfileNameSchema>;
 
-export const ConfigSchema = z.object({
-  version: z.literal(1).default(1),
+const ConfigSchemaV2 = z.object({
+  version: z.literal(2).default(2),
   pi: z
     .object({
-      executable: z.string().default("pi"),
+      /** @deprecated Ignored in SDK mode; warning only during migration. */
+      executable: z.string().optional(),
+      agentDir: z.string().default("~/.pi/agent"),
+      authPath: z.string().nullable().optional(),
+      modelsPath: z.string().nullable().optional(),
       provider: z.string().default("openai-codex"),
       defaultModel: ModelSchema.default("gpt-5.6-sol"),
-      allowedModels: z.array(ModelSchema).default(["gpt-5.6-sol", "gpt-5.6-luna"]),
+      allowedModels: z
+        .array(ModelSchema)
+        .default(["gpt-5.6-sol", "gpt-5.6-luna"]),
+      allowModelNetwork: z.boolean().default(false),
+      refreshAuthBeforeRun: z.boolean().default(true),
+      /** Development-only; not a supported release path. */
+      backend: z.enum(["sdk", "legacy-cli"]).optional(),
     })
     .default({}),
+  sdk: z
+    .object({
+      resourceIsolation: z.enum(["strict"]).default("strict"),
+      writableToolExecution: z
+        .enum(["sequential", "parallel"])
+        .default("sequential"),
+      providerRetry: z
+        .object({
+          enabled: z.boolean().default(true),
+          maxRetries: z.number().default(2),
+        })
+        .default({}),
+    })
+    .default({}),
+  shellEnvironment: z
+    .object({
+      passThrough: z.array(z.string()).default([]),
+    })
+    .default({}),
+  /** @deprecated Migrated to shellEnvironment.passThrough */
+  environment: z
+    .object({
+      passThrough: z.array(z.string()).default([]),
+    })
+    .optional(),
   profiles: z
     .object({
       review: z.object({ enabled: z.boolean().default(true) }).default({}),
@@ -58,11 +93,6 @@ export const ConfigSchema = z.object({
       allowedRoots: z.array(z.string()).default([]),
     })
     .default({}),
-  environment: z
-    .object({
-      passThrough: z.array(z.string()).default([]),
-    })
-    .default({}),
   limits: z
     .object({
       timeoutSeconds: z
@@ -76,8 +106,12 @@ export const ConfigSchema = z.object({
       maxPromptBytes: z.number().default(262144),
       maxAttachmentCount: z.number().default(32),
       maxAttachmentBytes: z.number().default(52428800),
-      maxStdoutBytes: z.number().default(16777216),
-      maxStderrBytes: z.number().default(8388608),
+      maxFinalOutputBytes: z.number().default(8388608),
+      maxEventMetadataBytes: z.number().default(4194304),
+      /** @deprecated CLI-only; ignored in SDK mode */
+      maxStdoutBytes: z.number().optional(),
+      /** @deprecated CLI-only; ignored in SDK mode */
+      maxStderrBytes: z.number().optional(),
     })
     .default({}),
   concurrency: z
@@ -107,8 +141,72 @@ export const ConfigSchema = z.object({
     .default({}),
 });
 
-export type AppConfig = z.infer<typeof ConfigSchema>;
+export type AppConfig = z.infer<typeof ConfigSchemaV2>;
+
+export interface ConfigV1Input {
+  version?: 1;
+  pi?: {
+    executable?: string;
+    provider?: string;
+    defaultModel?: AllowedModel;
+    allowedModels?: AllowedModel[];
+  };
+  environment?: { passThrough?: string[] };
+  [key: string]: unknown;
+}
+
+export function migrateConfigV1(input: ConfigV1Input): Record<string, unknown> {
+  const { environment, pi, version: _v, ...rest } = input;
+  const migrated: Record<string, unknown> = {
+    ...rest,
+    version: 2,
+    pi: {
+      provider: pi?.provider ?? "openai-codex",
+      defaultModel: pi?.defaultModel ?? "gpt-5.6-sol",
+      allowedModels: pi?.allowedModels ?? ["gpt-5.6-sol", "gpt-5.6-luna"],
+      ...(pi?.executable ? { executable: pi.executable } : {}),
+    },
+    shellEnvironment: {
+      passThrough: environment?.passThrough ?? [],
+    },
+  };
+  return migrated;
+}
+
+export const ConfigSchema = z.preprocess((raw) => {
+  if (!raw || typeof raw !== "object") return raw;
+  const obj = raw as Record<string, unknown>;
+  if (obj.version === 1 || obj.version === undefined) {
+    // Treat missing version as v1 when pi.executable / environment present
+    if (
+      obj.version === 1 ||
+      (obj.environment && !obj.shellEnvironment) ||
+      (obj.pi &&
+        typeof obj.pi === "object" &&
+        "executable" in (obj.pi as object) &&
+        !("agentDir" in (obj.pi as object)))
+    ) {
+      return migrateConfigV1(obj as ConfigV1Input);
+    }
+  }
+  return obj;
+}, ConfigSchemaV2);
 
 export function defaultConfig(): AppConfig {
-  return ConfigSchema.parse({});
+  return ConfigSchema.parse({ version: 2 });
+}
+
+export function warnDeprecatedConfig(config: AppConfig): string[] {
+  const warnings: string[] = [];
+  if (config.pi.executable) {
+    warnings.push(
+      "config.pi.executable is ignored in SDK mode. Remove it from the config.",
+    );
+  }
+  if (config.environment?.passThrough?.length) {
+    warnings.push(
+      "config.environment.passThrough is deprecated; use shellEnvironment.passThrough.",
+    );
+  }
+  return warnings;
 }

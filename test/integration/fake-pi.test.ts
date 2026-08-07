@@ -1,75 +1,70 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { writeFileSync, mkdirSync, chmodSync, rmSync } from "node:fs";
+import { describe, it, expect, afterEach } from "vitest";
+import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { runPi, sanitizeEnv } from "../../src/pi/process.js";
+import { execSync } from "node:child_process";
 import { defaultConfig } from "../../src/config/schema.js";
-import { buildPiArgv } from "../../src/pi/argv.js";
-import { getProfile } from "../../src/core/profiles.js";
+import { runDelegation } from "../../src/core/delegate.js";
+import { FakePiExecutor } from "../fakes/fake-pi-executor.js";
+import { setPiExecutorForTests } from "../../src/pi-sdk/factory.js";
+import { buildSanitizedShellEnvironment } from "../../src/pi-sdk/environment.js";
+import { mapProfileToSdkTools } from "../../src/pi-sdk/profile-mapper.js";
 
-const fakeDir = join(tmpdir(), `pi-delegate-fake-${process.pid}`);
-const fakePi = join(fakeDir, "fake-pi");
-
-beforeAll(() => {
-  mkdirSync(fakeDir, { recursive: true });
-  writeFileSync(
-    fakePi,
-    `#!/usr/bin/env node
-let data='';
-process.stdin.on('data',c=>data+=c);
-process.stdin.on('end',()=>{
-  const mode = process.argv.includes('--mode') ? 'json' : 'text';
-  if (process.argv.includes('--fail')) {
-    process.stderr.write('boom');
-    process.exit(2);
-  }
-  if (mode === 'json') {
-    console.log(JSON.stringify({type:'agent_end',willRetry:false}));
-    console.log(JSON.stringify({type:'agent_settled'}));
-    console.log(JSON.stringify({type:'message_end',content:'# Review Result\\n\\ntests pass\\n'}));
-  } else {
-    process.stdout.write('# Review Result\\n\\ntests pass\\n');
-  }
-});
-`,
-  );
-  chmodSync(fakePi, 0o755);
+afterEach(() => {
+  setPiExecutorForTests(undefined);
 });
 
-afterAll(() => {
-  rmSync(fakeDir, { recursive: true, force: true });
-});
+describe("fake pi executor", () => {
+  it("runs delegation with injected fake executor", async () => {
+    const root = join(tmpdir(), `pi-delegate-int-${process.pid}`);
+    rmSync(root, { recursive: true, force: true });
+    mkdirSync(root, { recursive: true });
+    execSync("git init", { cwd: root });
+    execSync('git config user.email "t@t"', { cwd: root });
+    execSync('git config user.name "t"', { cwd: root });
+    writeFileSync(join(root, "README.md"), "hello\n");
+    execSync("git add . && git commit -m init", { cwd: root });
 
-describe("fake pi process", () => {
-  it("runs without shell and captures stdout", async () => {
-    const argv = buildPiArgv({
-      provider: "openai-codex",
-      model: "gpt-5.6-sol",
-      thinking: "medium",
-      profile: getProfile("review"),
+    const fake = new FakePiExecutor(async () => ({
+      finalText: "# Review Result\n\nlooks fine\n",
+      completion: "completed",
+      agentStarted: true,
+      agentEnded: true,
+    }));
+    setPiExecutorForTests(fake);
+
+    const config = defaultConfig();
+    config.workspace.allowedRoots = [root];
+
+    const result = await runDelegation({
+      profile: "review",
+      objective: "review the repo",
+      workspace: root,
+      config,
+      reviewKind: "static-hunt",
     });
-    const result = await runPi({
-      executable: fakePi,
-      argv,
-      prompt: "hello",
-      env: sanitizeEnv(defaultConfig()),
-      timeoutMs: 5000,
-      maxStdoutBytes: 1_000_000,
-      maxStderrBytes: 1_000_000,
-    });
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("# Review Result");
+
+    expect(result.status).toBe("success");
+    expect(result.output).toContain("# Review Result");
+    expect(result.attempts[0]?.backend).toBe("fake");
+
+    rmSync(root, { recursive: true, force: true });
   });
 
-  it("sanitizes env (drops secrets)", () => {
-    const env = sanitizeEnv(defaultConfig(), {
+  it("sanitizes shell env", () => {
+    const env = buildSanitizedShellEnvironment(defaultConfig(), {
       PATH: "/usr/bin",
       HOME: "/home/u",
       SECRET_TOKEN: "nope",
       PI_HOME: "/x",
     });
     expect(env.SECRET_TOKEN).toBeUndefined();
-    expect(env.PI_HOME).toBe("/x");
+    expect(env.PI_HOME).toBeUndefined();
     expect(env.PATH).toBe("/usr/bin");
+  });
+
+  it("maps profiles for sdk", () => {
+    expect(mapProfileToSdkTools("verify").tools).toContain("bash");
+    expect(mapProfileToSdkTools("verify").tools).not.toContain("edit");
   });
 });

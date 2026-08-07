@@ -1,6 +1,6 @@
 {
   "name": "pi-delegate-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Delegate bounded coding tasks from MCP clients to Pi Coding Agent",
   "type": "module",
   "bin": {
@@ -20,7 +20,7 @@
     "SECURITY.md"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=22.19.0"
   },
   "scripts": {
     "build": "tsup",
@@ -46,6 +46,7 @@
   "homepage": "https://github.com/sotola122/pi-delegate-mcp#readme",
   "license": "MIT",
   "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.84.0",
     "@modelcontextprotocol/sdk": "1.30.0",
     "yaml": "^2.8.0",
     "zod": "^3.25.76"

@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { assetsRoot } from "../prompt/assets.js";
 import { configPath } from "../config/paths.js";
+import { loadConfig } from "../config/loader.js";
 import { serveCommand } from "./serve.js";
 import {
   installCursor,
@@ -11,8 +12,9 @@ import {
 } from "./install.js";
 import { runCommand, parseRunArgs } from "./run.js";
 import { cleanupCommand } from "./cleanup.js";
+import { authStatus, authLogin, authLogout } from "../pi-sdk/auth.js";
 
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
 
 function usage(): string {
   return `pi-delegate-mcp ${VERSION}
@@ -20,6 +22,9 @@ function usage(): string {
 Usage:
   pi-delegate-mcp serve
   pi-delegate-mcp doctor
+  pi-delegate-mcp auth status
+  pi-delegate-mcp auth login openai-codex
+  pi-delegate-mcp auth logout openai-codex
   pi-delegate-mcp install cursor --scope global
   pi-delegate-mcp uninstall cursor --scope global
   pi-delegate-mcp print-config cursor
@@ -79,6 +84,25 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     case "doctor":
       doctorCommand();
       return;
+    case "auth": {
+      const config = loadConfig();
+      const sub = argv[1];
+      if (sub === "status") {
+        await authStatus(config);
+        return;
+      }
+      if (sub === "login") {
+        const provider = argv[2] ?? "openai-codex";
+        await authLogin(config, provider);
+        return;
+      }
+      if (sub === "logout") {
+        const provider = argv[2] ?? "openai-codex";
+        await authLogout(config, provider);
+        return;
+      }
+      throw new Error("Usage: auth status | auth login <provider> | auth logout <provider>");
+    }
     case "install": {
       if (argv[1] !== "cursor") throw new Error("Usage: install cursor --scope global");
       const scopeIdx = argv.indexOf("--scope");

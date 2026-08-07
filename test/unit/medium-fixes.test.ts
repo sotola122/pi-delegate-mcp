@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { jsonModeSucceeded, parseJsonlEvents } from "../../src/pi/json-events.js";
+import { finalizeStatusFromOutcome } from "../../src/core/result.js";
 import {
   captureTreeFingerprint,
   fingerprintsDiffer,
@@ -22,30 +22,47 @@ import { advancePipelineWorkspace } from "../../src/core/batch.js";
 import type { RunRecord } from "../../src/core/run-registry.js";
 import { DelegateError } from "../../src/core/errors.js";
 
-describe("jsonModeSucceeded requires agent_end + settled", () => {
-  it("fails when agent_end missing", () => {
-    const events = parseJsonlEvents(
-      '{"type":"agent_settled"}\n{"type":"message_end","content":"x"}',
-    );
-    expect(jsonModeSucceeded(events, 0)).toBe(false);
+describe("sdk completion status", () => {
+  it("fails when agent did not end", () => {
+    expect(
+      finalizeStatusFromOutcome({
+        completion: "completed",
+        output: "# Review Result\nok",
+        profile: "review",
+        acceptance: [],
+        requireHeading: true,
+        agentStarted: true,
+        agentEnded: false,
+      }),
+    ).toBe("incomplete");
   });
 
-  it("fails when settled missing", () => {
-    const events = parseJsonlEvents(
-      '{"type":"agent_end","willRetry":false}\n{"type":"message_end","content":"x"}',
-    );
-    expect(jsonModeSucceeded(events, 0)).toBe(false);
+  it("fails on provider_error", () => {
+    expect(
+      finalizeStatusFromOutcome({
+        completion: "provider_error",
+        output: "",
+        profile: "review",
+        acceptance: [],
+        requireHeading: true,
+        agentStarted: true,
+        agentEnded: false,
+      }),
+    ).toBe("failed");
   });
 
-  it("passes with both signals", () => {
-    const events = parseJsonlEvents(
-      [
-        '{"type":"agent_end","willRetry":false}',
-        '{"type":"agent_settled"}',
-        '{"type":"message_end","content":"x"}',
-      ].join("\n"),
-    );
-    expect(jsonModeSucceeded(events, 0)).toBe(true);
+  it("succeeds with completed + heading", () => {
+    expect(
+      finalizeStatusFromOutcome({
+        completion: "completed",
+        output: "# Review Result\nok",
+        profile: "review",
+        acceptance: [],
+        requireHeading: true,
+        agentStarted: true,
+        agentEnded: true,
+      }),
+    ).toBe("success");
   });
 });
 

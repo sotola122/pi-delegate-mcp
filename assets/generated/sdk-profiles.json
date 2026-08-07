@@ -1,0 +1,49 @@
+{
+  "review": {
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls"
+    ],
+    "excludeTools": [
+      "bash",
+      "edit",
+      "write"
+    ],
+    "noTools": false,
+    "writable": false
+  },
+  "verify": {
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "bash"
+    ],
+    "excludeTools": [],
+    "noTools": false,
+    "writable": true
+  },
+  "implement": {
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "edit",
+      "write",
+      "bash"
+    ],
+    "excludeTools": [],
+    "noTools": false,
+    "writable": true
+  },
+  "no-tools": {
+    "tools": [],
+    "excludeTools": [],
+    "noTools": true,
+    "writable": false
+  }
+}
