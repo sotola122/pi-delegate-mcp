@@ -1,0 +1,59 @@
+{
+  "name": "pi-delegate-mcp",
+  "version": "0.1.0",
+  "description": "Delegate bounded coding tasks from MCP clients to Pi Coding Agent",
+  "type": "module",
+  "bin": {
+    "pi-delegate-mcp": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "assets",
+    "README.md",
+    "LICENSE",
+    "SECURITY.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit",
+    "sync:delegate-pi": "bun run scripts/sync-delegate-pi.ts",
+    "check:delegate-pi-assets": "bun run scripts/verify-assets.ts",
+    "verify:package": "bun run scripts/verify-package.ts",
+    "prepublishOnly": "bun run build && bun run check:delegate-pi-assets && bun run verify:package"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sotola122/pi-delegate-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sotola122/pi-delegate-mcp/issues"
+  },
+  "homepage": "https://github.com/sotola122/pi-delegate-mcp#readme",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "yaml": "^2.8.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "tsup": "^8.5.0",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.3"
+  }
+}

@@ -1,0 +1,30 @@
+name: Sync delegate-pi assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Upstream commit SHA or ref"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Checkout upstream agents
+        uses: actions/checkout@v4
+        with:
+          repository: sotola122/agents
+          path: _upstream
+          ref: ${{ inputs.ref }}
+      - run: bun install --frozen-lockfile
+      - run: bun run sync:delegate-pi -- --source _upstream/skills/delegate-pi --ref ${{ inputs.ref }}
+      - run: bun run check:delegate-pi-assets
+      - uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: sync delegate-pi assets @ ${{ inputs.ref }}"

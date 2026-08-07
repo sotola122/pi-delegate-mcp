@@ -1,0 +1,29 @@
+{
+  "repository": "sotola122/agents",
+  "path": "skills/delegate-pi",
+  "ref": "local-vendored",
+  "files": {
+    "modalities.yaml": "sha256:a9c3a44e2b19d55952a6ef910a421f0052dae67919613ebb988757c1b413831b",
+    "profiles.yaml": "sha256:f4a9a7cb1de006e3f86511021f3c99aaa46aa438920529456cef3181103a386a",
+    "prompts/append/adversarial.md": "sha256:9c1384a05a4224390aa24e2178bbfba755c83244778c3cac23737986d06d757e",
+    "prompts/append/browser.md": "sha256:5f760aaab07504c8289ac475cc086ce2ff28144d1fea0b88232ca83323aee762",
+    "prompts/append/document.md": "sha256:acb95c1080fa87af7365c5e6bd31a80a6d66f6a3fb27b7339005667bd75b7a13",
+    "prompts/append/tooling-suggest.md": "sha256:575885ae5ff4730bb267128ef1a85859d572f3f9b6d821f137c41b8361910d90",
+    "prompts/append/vision.md": "sha256:7b15b902a67e6c55d7b02b64cebfcfe928e640c3ff2f5b081149d57cba05a941",
+    "prompts/implement.md": "sha256:22500d5488a91eda91715e4c0314decd99486b133f144e484dbb45d4c03c573c",
+    "prompts/no-tools.md": "sha256:666f2a5001e9592b8344d1fb1e82e0e32fdd170f8a4a9d8c188ae7dc4cc2934b",
+    "prompts/review.md": "sha256:cebd9c657458d823d741ae40ba86cae1b50d6dae44058c7683a785421411d773",
+    "prompts/smoke.md": "sha256:df1fecf77798a3eaee11dd6d22657de5e93fc05f0719ac3ad31fa8f38ff3159e",
+    "prompts/system/output-contract.md": "sha256:b3b0eef3939efac8b479908a038a71654b9edf86002aa4e3f26b447974683095",
+    "prompts/system/safety.md": "sha256:85f3cf1c4662f3d15578d260f95ef0416356ab32241c58ffdef6073fd86169e6",
+    "prompts/verify.md": "sha256:d5cecc91907e61f4b7e4a8826179de593dc9da28cfd3e89a3ba02e8cf8910999",
+    "provider.yaml": "sha256:4e5a904264911c295310ebec66aae41fff9d10c499389b37aef9233373ff8a53",
+    "references/browser.md": "sha256:c1cb7988d3e78e46fa824f5b190718c4512f01e381e7eaf3ed7fc964e01704e8",
+    "references/cli.md": "sha256:b55760c38489c05958e62bffeba373cddb9415d122eecde74294f1ed00360509",
+    "references/document.md": "sha256:b0d1471b1d2e8a070fef056503c0e07cae6c8b50c98d7a932fec5ce928d9ee50",
+    "references/multimodal.md": "sha256:afdaa8f046895d2486f5355dc12fbcc9996b3b8c9cab370643396826119e1f51",
+    "references/prerequisites.md": "sha256:caa3dfb438bb6c67ad75723b9a4cb12007750c7055376e48478464910de5bf99",
+    "references/vision.md": "sha256:81f004fcc3783814f457c4f82c1cabc58fcd7f067ad17063302b315bbdf4e209"
+  },
+  "notes": "Vendored snapshot with effort ladder med|high|xhigh|max; system prompts added."
+}

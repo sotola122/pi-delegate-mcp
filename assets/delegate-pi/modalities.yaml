@@ -1,0 +1,108 @@
+# Modality overlay for delegate-pi multimodal runs.
+# Modalities validate against the chosen profile — never upgrade it silently.
+# upgrade_policy: never
+#
+# Effective tool allowlist (single rule):
+#   profile.tools ∪ backend.tool_names − profile.exclude_tools
+# Collision (a name in both allowlist and exclude) → stop.
+# Any backend with nonempty requires_tools is structurally incompatible with no-tools.
+#
+# Canonical append order: vision → document → browser
+# Parent materializes references into the prompt; child does not resolve package paths.
+
+modalities:
+  vision:
+    purpose: image, screenshot, diagram, or visual appearance judgment
+    append: prompts/append/vision.md
+    reference: references/vision.md
+    attach_formats: [png, jpg, jpeg, webp, gif]
+    attach_via: cli_attachments
+    upgrade_policy: never
+    requires_image_model: true
+    backend: none
+    backends:
+      none:
+        requires_tools: []
+        compatible_profiles: [review, verify, implement, no-tools]
+
+  document:
+    purpose: PDF, spec, or scanned document extraction and citation
+    append: prompts/append/document.md
+    reference: references/document.md
+    backend: bash
+    upgrade_policy: never
+    requires_image_model: when_rendered
+    attach_via: task_input_paths
+    # Parent resolves render_policy before model selection:
+    #   never | on_empty_or_layout
+    # page_range must derive from user-approved in_scope.
+    # Do not auto-shrink scope to fit limits — stop or mark incomplete.
+    backends:
+      bash:
+        page_counter: pdfinfo
+        text_extractor: pdftotext
+        renderer: pdftoppm
+        max_document_pages: 20
+        max_render_pages: 20
+        install_policy: never
+        requires_tools: [bash, read]
+        compatible_profiles: [verify, implement]
+      plugin:
+        package: pi-pdf
+        extension_path: null
+        tool_names: []
+        max_document_pages: 20
+        max_render_pages: 20
+        # Page count via plugin tools — do not require Poppler for plugin.
+        install_policy: never
+        requires_tools: [read]
+        compatible_profiles: [review, verify, implement]
+
+  browser:
+    purpose: live UI check via browser automation
+    append: prompts/append/browser.md
+    reference: references/browser.md
+    backend: bash
+    upgrade_policy: never
+    requires_image_model: when_visual_check
+    implies_vision_when: visual_check
+    # Typed preflight (parent resolves before launch; serialize into task block):
+    #   target_url: string
+    #   server: none | { owner: parent|child|external, argv: [string], cwd: abs }
+    #     owner:child requires bash in profile allowlist
+    #     review+mcp → owner must be parent or external
+    #     owner:parent → parent starts argv, holds process handle
+    #   readiness: { kind: http_status|shell|log_line, value: string }
+    #     parent owns readiness when server.owner is parent or external
+    #     child owns readiness only when server.owner is child and profile has bash
+    #   timeout_ms: integer (milliseconds)
+    #   teardown_owner: parent|child|external
+    #     Always teardown unconditionally at end of run (success or failure)
+    #   browser_channel: string | empty (Playwright channel; empty = bundled Chromium)
+    #   artifact_dir: absolute path (parent-created unique empty dir)
+    #   visual_check: boolean
+    preflight:
+      target_url: required
+      server: required
+      readiness: required
+      timeout_ms: required
+      teardown_owner: required
+      browser_channel: required
+      artifact_dir: required
+      visual_check: required
+    backends:
+      bash:
+        engine: playwright
+        install_policy: never
+        screenshot_then: read
+        requires_tools: [bash, read, ls]
+        compatible_profiles: [verify, implement]
+      mcp:
+        adapter: pi-mcp-adapter
+        adapter_extension_path: null
+        server: "@playwright/mcp"
+        mcp_config: null
+        tool_names: []
+        install_policy: never
+        requires_tools: [read]
+        compatible_profiles: [review, verify, implement]

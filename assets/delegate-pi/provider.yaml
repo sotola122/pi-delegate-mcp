@@ -1,0 +1,90 @@
+# Default Pi provider/model for delegate-pi.
+# Single source for field-level resolution. Do not duplicate literals in SKILL.md.
+
+provider: openai-codex
+default_model: gpt-5.6-sol
+
+# Smoke modes (step 0):
+#   provider_auth  — user asks only for connectivity; use smoke.provider_auth
+#   planned_tuple  — smoke gates a real task; test the resolved provider/model at thinking low
+smoke:
+  provider_auth:
+    model: gpt-5.6-luna
+    thinking: low
+  planned_tuple:
+    thinking: low
+
+# Common effort ladder (review, verify, implement, multimodal).
+# Thinking is owned by effort (and floors from implement_alternate). multimodal.thinking has no authority.
+# Effort API: med | high | xhigh | max (low/ultra abolished).
+effort:
+  med:
+    thinking: medium
+    when: default — standard review, verify, bounded implement
+  high:
+    thinking: high
+    when: security, concurrency, data loss; multi-module scope; adversarial lens
+  xhigh:
+    thinking: xhigh
+    when: deep investigation; exhaustive static analysis; large cross-module work
+  max:
+    thinking: max
+    when: user says critical/exhaustive; or xhigh effort failed to reach root cause
+
+# Thinking rank for max(...) floors (low → high):
+#   medium < high < xhigh < max
+thinking_rank: [medium, high, xhigh, max]
+
+# Alternate implement model — trigger any; never overrides an explicit user model.
+implement_alternate:
+  model: gpt-5.6-luna
+  thinking: xhigh
+  when:
+    - user names luna
+    - implement spans 5+ files or crosses modules
+    - gpt-5.6-sol implement incomplete or failed; retry with alternate
+
+# Applied when image_input_planned is true. Provider/model only — not thinking.
+multimodal:
+  provider: openai-codex
+  model: gpt-5.6-sol
+  supports_image_input: true
+  image_formats: [png, jpg, jpeg, webp, gif]
+
+vision_capable_models:
+  - gpt-5.6-sol
+  - gpt-5.6-luna
+
+# image_input_planned is true when any:
+#   - vision modality selected
+#   - document.render_policy != never
+#   - browser.visual_check == true
+# If image_input_planned and user model is outside vision_capable_models → confirm or refuse.
+
+# Field-level resolution (apply in order; first match that yields a value wins).
+# User override always wins and is never overwritten by alternate or multimodal.
+resolution:
+  provider:
+    - user_override
+    - multimodal.provider   # only when image_input_planned
+    - provider
+  model:
+    - user_override
+    - implement_alternate.model   # when any implement_alternate.when matches and no user_override
+    - multimodal.model            # only when image_input_planned
+    - default_model
+  thinking:
+    - user_override
+    - max(effort[key].thinking, implement_alternate.thinking)  # when alternate model selected
+    - effort[key].thinking
+    - effort.med.thinking
+
+# Retry (step 7 failure phase — not step 4).
+# max_attempts: 2 means initial run + one retry.
+retry:
+  max_attempts: 2
+  # Before attempt 1, capture immutable baseline into artifact_dir:
+  #   base sha + dirty.patch + archived untracked contents (type/mode/symlink).
+  # Attempt 2 materializes from that archive only (not the live tree).
+  # On successful implement retry: apply result.patch to destination, then remove worktree.
+  # Keep attempt-1 output.
