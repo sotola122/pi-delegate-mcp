@@ -175,8 +175,17 @@ describe("security", () => {
     const { validateChildSkills } = await import(
       "../../src/workspace/child-skills.js"
     );
-    expect(() => validateChildSkills(["/x"], defaultConfig())).toThrow(
-      /disabled/,
+    const cfg = defaultConfig();
+    cfg.childSkills.enabled = false;
+    expect(() => validateChildSkills(["/x"], cfg)).toThrow(/disabled/);
+  });
+
+  it("blocks childSkills outside allowed roots even when enabled", async () => {
+    const { validateChildSkills } = await import(
+      "../../src/workspace/child-skills.js"
     );
+    expect(() =>
+      validateChildSkills(["/etc/passwd"], defaultConfig()),
+    ).toThrow(/outside/);
   });
 });

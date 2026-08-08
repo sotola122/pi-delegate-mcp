@@ -305,6 +305,8 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
           acceptanceChecks: r.acceptanceChecks,
           lenses: r.lenses,
           focus: r.focus,
+          attachments: r.attachments,
+          childSkills: r.childSkills,
           delivery: r.delivery,
           workspaceMode: r.workspaceMode,
           effort: r.effort,
@@ -429,6 +431,7 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
           args.mode === "planned-tuple"
             ? resolveProvider({
                 config: ctx.config,
+                profile: args.profile,
                 effort: args.effort,
                 model: args.model,
               })

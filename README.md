@@ -39,6 +39,33 @@ Long-running tools return `{ status: "running", runId|batchId }` immediately. Po
 
 `med` | `high` | `xhigh` | `max` → Pi thinking `medium` | `high` | `xhigh` | `max`.
 
+When `model` / `effort` are omitted, per-profile defaults from `assets/delegate-pi/provider.yaml` apply:
+
+| Profile | Default |
+| --- | --- |
+| `review` / `verify` / `no-tools` | `gpt-5.6-sol` / `xhigh` |
+| `implement` | `gpt-5.6-luna` / `max` |
+
+## Child skills
+
+`childSkills` passes explicit skill paths (`SKILL.md` or a directory containing it) to the child agent. Ambient skill discovery stays off. Enabled by default.
+
+Selected packages are **copied into the run directory** before execution; the child reads only that materialization (symlinks are not followed). Paths must resolve inside an allowed root, otherwise the run fails with `child_skill_forbidden`.
+
+Default roots (when `allowedRoots` is empty): `~/.agents/skills`, `~/.cursor/skills`, `~/.cursor/skills-cursor`, `~/.claude/skills`, `~/.codex/skills`, plus the resolved workspace. An explicit `allowedRoots` list is authoritative and does **not** auto-append the workspace.
+
+```jsonc
+{
+  "version": 2,
+  "childSkills": {
+    "enabled": true,
+    "allowedRoots": ["~/.agents/skills"]
+  }
+}
+```
+
+`pi-delegate-mcp doctor` prints the effective state and roots.
+
 ## Safety
 
 - SDK tool allowlist is a **model tool allowlist, not an OS sandbox**. Policy extensions additionally block dangerous commands.

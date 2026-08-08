@@ -33,8 +33,57 @@ describe("effort → thinking", () => {
     expect(resolveProvider({ config, effort: "max" }).thinking).toBe("max");
   });
 
-  it("defaults to med", () => {
+  it("defaults to med when no profile is given", () => {
     expect(resolveProvider({ config }).effort).toBe("med");
+    expect(resolveProvider({ config }).model).toBe("gpt-5.6-sol");
+  });
+
+  it("applies profile defaults for review / implement / no-tools", () => {
+    expect(resolveProvider({ config, profile: "review" })).toMatchObject({
+      model: "gpt-5.6-sol",
+      effort: "xhigh",
+      thinking: "xhigh",
+    });
+    expect(resolveProvider({ config, profile: "verify" })).toMatchObject({
+      model: "gpt-5.6-sol",
+      effort: "xhigh",
+      thinking: "xhigh",
+    });
+    expect(resolveProvider({ config, profile: "no-tools" })).toMatchObject({
+      model: "gpt-5.6-sol",
+      effort: "xhigh",
+      thinking: "xhigh",
+    });
+    expect(resolveProvider({ config, profile: "implement" })).toMatchObject({
+      model: "gpt-5.6-luna",
+      effort: "max",
+      thinking: "max",
+    });
+  });
+
+  it("user effort / model overrides profile defaults", () => {
+    expect(
+      resolveProvider({
+        config,
+        profile: "implement",
+        effort: "med",
+        model: "gpt-5.6-sol",
+      }),
+    ).toMatchObject({
+      model: "gpt-5.6-sol",
+      effort: "med",
+      thinking: "medium",
+    });
+  });
+
+  it("planned-tuple smoke can resolve implement profile defaults", () => {
+    expect(
+      resolveProvider({ config, profile: "implement" }),
+    ).toMatchObject({
+      model: "gpt-5.6-luna",
+      effort: "max",
+      thinking: "max",
+    });
   });
 
   it("rejects unknown models outside allowlist", () => {

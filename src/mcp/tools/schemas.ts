@@ -185,6 +185,8 @@ const roleSchema = z.object({
   acceptanceChecks: z.array(z.string()).optional(),
   lenses: z.array(z.enum(["adversarial", "tooling-suggest"])).optional(),
   focus: z.array(z.string()).optional(),
+  attachments: z.array(z.string()).optional(),
+  childSkills: z.array(z.string()).optional(),
   delivery: z.enum(["patch", "apply"]).optional(),
   workspaceMode: z.enum(["auto", "in-place", "worktree"]).optional(),
   effort: EffortSchema.optional(),

@@ -14,31 +14,48 @@ smoke:
   planned_tuple:
     thinking: low
 
+# Per-profile defaults when the caller omits model / effort.
+# User overrides always win. "advice" / judge maps to no-tools.
+profile_defaults:
+  review:
+    model: gpt-5.6-sol
+    effort: xhigh
+  verify:
+    model: gpt-5.6-sol
+    effort: xhigh
+  implement:
+    model: gpt-5.6-luna
+    effort: max
+  no-tools:
+    model: gpt-5.6-sol
+    effort: xhigh
+
 # Common effort ladder (review, verify, implement, multimodal).
 # Thinking is owned by effort (and floors from implement_alternate). multimodal.thinking has no authority.
 # Effort API: med | high | xhigh | max (low/ultra abolished).
 effort:
   med:
     thinking: medium
-    when: default — standard review, verify, bounded implement
+    when: explicit low-cost runs; smoke / quick probes (not a profile default)
   high:
     thinking: high
     when: security, concurrency, data loss; multi-module scope; adversarial lens
   xhigh:
     thinking: xhigh
-    when: deep investigation; exhaustive static analysis; large cross-module work
+    when: default for review, verify, no-tools (advice/judge); deep investigation
   max:
     thinking: max
-    when: user says critical/exhaustive; or xhigh effort failed to reach root cause
+    when: default for implement; user says critical/exhaustive
 
 # Thinking rank for max(...) floors (low → high):
 #   medium < high < xhigh < max
 thinking_rank: [medium, high, xhigh, max]
 
 # Alternate implement model — trigger any; never overrides an explicit user model.
+# Aligns with implement profile_defaults (luna/max); still used for retry when sol was chosen.
 implement_alternate:
   model: gpt-5.6-luna
-  thinking: xhigh
+  thinking: max
   when:
     - user names luna
     - implement spans 5+ files or crosses modules
@@ -72,12 +89,18 @@ resolution:
     - user_override
     - implement_alternate.model   # when any implement_alternate.when matches and no user_override
     - multimodal.model            # only when image_input_planned
+    - profile_defaults[profile].model
     - default_model
   thinking:
     - user_override
     - max(effort[key].thinking, implement_alternate.thinking)  # when alternate model selected
     - effort[key].thinking
+    - effort[profile_defaults[profile].effort].thinking
     - effort.med.thinking
+  effort:
+    - user_override
+    - profile_defaults[profile].effort
+    - med
 
 # Retry (step 7 failure phase — not step 4).
 # max_attempts: 2 means initial run + one retry.

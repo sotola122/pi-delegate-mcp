@@ -89,7 +89,8 @@ const ConfigSchemaV2 = z.object({
     .default({}),
   childSkills: z
     .object({
-      enabled: z.boolean().default(false),
+      enabled: z.boolean().default(true),
+      /** Empty falls back to the conventional skill directories. */
       allowedRoots: z.array(z.string()).default([]),
     })
     .default({}),
@@ -105,6 +106,7 @@ const ConfigSchemaV2 = z.object({
         .default({}),
       maxPromptBytes: z.number().default(262144),
       maxAttachmentCount: z.number().default(32),
+      maxChildSkillCount: z.number().default(16),
       maxAttachmentBytes: z.number().default(52428800),
       maxFinalOutputBytes: z.number().default(8388608),
       maxEventMetadataBytes: z.number().default(4194304),

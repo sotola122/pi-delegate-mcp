@@ -14,7 +14,10 @@ import {
   assertVisionCapableModel,
 } from "../prompt/multimodal.js";
 import { resolveWorkspace, validateAttachmentPaths, assertGitRootAllowed } from "../workspace/roots.js";
-import { validateChildSkills } from "../workspace/child-skills.js";
+import {
+  materializeChildSkills,
+  validateChildSkills,
+} from "../workspace/child-skills.js";
 import { gitRoot, gitIsDirty, gitHead } from "../workspace/git.js";
 import { buildChangeManifest } from "../workspace/manifest.js";
 import {
@@ -130,7 +133,16 @@ export async function runDelegation(
       req.attachments ?? [],
       req.config,
     );
-    const childSkills = validateChildSkills(req.childSkills, req.config);
+    const validatedSkills = validateChildSkills(
+      req.childSkills,
+      req.config,
+      workspace,
+    );
+    const childSkillsDir = join(dirs.input, "child-skills");
+    const childSkills = materializeChildSkills(validatedSkills, childSkillsDir);
+    if (childSkills.length) {
+      artifacts.push({ kind: "child-skills", path: childSkillsDir });
+    }
 
     const detectedModalities = detectModalitiesFromAttachments(
       attachments,
@@ -150,6 +162,7 @@ export async function runDelegation(
     if (imagePlanned) {
       const preview = resolveProvider({
         config: req.config,
+        profile: req.profile,
         effort: req.effort,
         model: req.model,
         imageInputPlanned: true,
@@ -274,6 +287,7 @@ export async function runDelegation(
     let lastOutput = "";
     let lastResolved = resolveProvider({
       config: req.config,
+      profile: req.profile,
       effort: req.effort,
       model: req.model,
       imageInputPlanned: imagePlanned,
@@ -311,6 +325,7 @@ export async function runDelegation(
 
       lastResolved = resolveProvider({
         config: req.config,
+        profile: req.profile,
         effort: req.effort,
         model: req.model,
         imageInputPlanned: imagePlanned,
@@ -380,7 +395,14 @@ export async function runDelegation(
             workspace: execCwd,
             inScope: req.inScope,
             outOfScope: req.outOfScope,
-            artifactRoots: [dirs.root, dirs.input, dirs.result],
+            // Materialized skills live under dirs.input; keep that root readable
+            // even when workspace.allowedRoots is empty / narrow.
+            artifactRoots: [
+              dirs.root,
+              dirs.input,
+              dirs.result,
+              ...(childSkills.length ? [childSkillsDir] : []),
+            ],
             allowedRoots: req.config.workspace.allowedRoots,
           },
           timeoutMs: timeoutSec * 1000,

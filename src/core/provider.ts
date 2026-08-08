@@ -1,8 +1,18 @@
 import { join } from "node:path";
 import { parseYamlFile } from "../config/loader.js";
-import type { AppConfig, Effort, AllowedModel } from "../config/schema.js";
+import type {
+  AppConfig,
+  Effort,
+  AllowedModel,
+  ProfileName,
+} from "../config/schema.js";
 import { assetsRoot } from "../prompt/assets.js";
 import { DelegateError } from "./errors.js";
+
+export interface ProfileDefault {
+  model: string;
+  effort: Effort;
+}
 
 export interface ProviderFile {
   provider: string;
@@ -11,6 +21,7 @@ export interface ProviderFile {
     provider_auth: { model: string; thinking: string };
     planned_tuple: { thinking: string };
   };
+  profile_defaults?: Partial<Record<ProfileName, ProfileDefault>>;
   effort: Record<string, { thinking: string; when?: string }>;
   thinking_rank: string[];
   implement_alternate: {
@@ -44,6 +55,11 @@ export function loadProviderFile(): ProviderFile {
   return cached;
 }
 
+/** Test helper — clears the cached provider.yaml parse. */
+export function clearProviderCache(): void {
+  cached = undefined;
+}
+
 function thinkingRank(file: ProviderFile, thinking: string): number {
   const idx = file.thinking_rank.indexOf(thinking);
   return idx < 0 ? 0 : idx;
@@ -55,6 +71,7 @@ function maxThinking(file: ProviderFile, a: string, b: string): string {
 
 export interface ResolveInput {
   config: AppConfig;
+  profile?: ProfileName;
   effort?: Effort;
   model?: AllowedModel;
   imageInputPlanned?: boolean;
@@ -64,7 +81,11 @@ export interface ResolveInput {
 
 export function resolveProvider(input: ResolveInput): ResolvedProvider {
   const file = loadProviderFile();
-  const effort: Effort = input.effort ?? "med";
+  const profileDefault =
+    input.profile !== undefined
+      ? file.profile_defaults?.[input.profile]
+      : undefined;
+  const effort: Effort = input.effort ?? profileDefault?.effort ?? "med";
   const effortEntry = file.effort[effort];
   if (!effortEntry) {
     throw new DelegateError(`Unknown effort: ${effort}`, "invalid_effort", true);
@@ -94,7 +115,7 @@ export function resolveProvider(input: ResolveInput): ResolvedProvider {
     provider = input.config.pi.provider;
   }
   if (!input.model && !input.useImplementAlternate && !input.imageInputPlanned) {
-    model = input.config.pi.defaultModel;
+    model = profileDefault?.model ?? input.config.pi.defaultModel;
   }
 
   if (input.thinkingOverride) {
