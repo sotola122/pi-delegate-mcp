@@ -180,12 +180,12 @@ describe("security", () => {
     expect(() => validateChildSkills(["/x"], cfg)).toThrow(/disabled/);
   });
 
-  it("blocks childSkills outside allowed roots even when enabled", async () => {
+  it("rejects non-skill paths even when childSkills are enabled", async () => {
     const { validateChildSkills } = await import(
       "../../src/workspace/child-skills.js"
     );
     expect(() =>
       validateChildSkills(["/etc/passwd"], defaultConfig()),
-    ).toThrow(/outside/);
+    ).toThrow(/SKILL\.md|not found|regular file/);
   });
 });

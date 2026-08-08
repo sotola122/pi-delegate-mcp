@@ -222,6 +222,7 @@ export function evaluateToolCall(
         ...(policy.workspace ? [canonicalizeRoot(policy.workspace)] : []),
         ...(policy.allowedRoots ?? []).map(canonicalizeRoot),
         ...(policy.artifactRoots ?? []).map(canonicalizeRoot),
+        ...(policy.skillRoots ?? []).map(canonicalizeRoot),
       ];
       if (roots.length > 0 && !roots.some((r) => isPathInside(r, abs))) {
         return {

@@ -37,6 +37,8 @@ export interface DelegationPolicy {
   outOfScope?: string[];
   artifactRoots?: string[];
   allowedRoots?: string[];
+  /** Selected child-skill package roots — readable without widening workspace roots. */
+  skillRoots?: string[];
 }
 
 export interface PiAttemptPlan {

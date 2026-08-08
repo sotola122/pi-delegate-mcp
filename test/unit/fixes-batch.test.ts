@@ -5,24 +5,13 @@ import {
   validateAttachmentPaths,
   resolveRealPath,
 } from "../../src/workspace/roots.js";
-import {
-  validateChildSkills,
-  resolveChildSkillRoots,
-  materializeChildSkills,
-} from "../../src/workspace/child-skills.js";
+import { validateChildSkills } from "../../src/workspace/child-skills.js";
 import { evaluateToolCall } from "../../src/pi-sdk/policy-extension.js";
 import { groupTasksForExecution } from "../../src/core/batch.js";
 import { DelegateError } from "../../src/core/errors.js";
-import {
-  writeFileSync,
-  mkdirSync,
-  rmSync,
-  readFileSync,
-  symlinkSync,
-  existsSync,
-} from "node:fs";
+import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir, homedir } from "node:os";
+import { tmpdir } from "node:os";
 
 const dir = join(tmpdir(), `pi-att-${process.pid}`);
 mkdirSync(dir, { recursive: true });
@@ -81,114 +70,55 @@ describe("A4 childSkills", () => {
     expect(() => validateChildSkills([skillEntry], cfg)).toThrow(/disabled/);
   });
 
-  it("falls back to conventional skill roots when allowedRoots is unset", () => {
-    const cfg = defaultConfig();
-    expect(cfg.childSkills.allowedRoots).toEqual([]);
-    expect(resolveChildSkillRoots(cfg)).toContain(
-      join(homedir(), ".agents", "skills"),
-    );
-    expect(resolveChildSkillRoots(cfg)).not.toContain(
-      join(homedir(), ".cursor", "plugins"),
-    );
-  });
-
-  it("accepts a SKILL.md package under a configured root", () => {
-    const cfg = defaultConfig();
-    cfg.childSkills.allowedRoots = [dir];
-    expect(validateChildSkills([skillEntry], cfg)).toEqual([
+  it("accepts a SKILL.md path or package directory with no allowlist", () => {
+    expect(validateChildSkills([skillEntry], defaultConfig())).toEqual([
       resolveRealPath(skillPkg),
     ]);
-  });
-
-  it("expands ~ in allowedRoots", () => {
-    const cfg = defaultConfig();
-    cfg.childSkills.allowedRoots = ["~/skills"];
-    expect(resolveChildSkillRoots(cfg)).toEqual([
-      join(homedir(), "skills"),
-    ]);
-  });
-
-  it("appends workspace only for default roots, not explicit allowlists", () => {
-    const cfg = defaultConfig();
-    const withWs = resolveChildSkillRoots(cfg, dir);
-    expect(withWs.some((r) => resolveRealPath(r) === resolveRealPath(dir))).toBe(
-      true,
-    );
-    cfg.childSkills.allowedRoots = [join(homedir(), ".agents", "skills")];
-    const explicit = resolveChildSkillRoots(cfg, dir);
-    expect(
-      explicit.some((r) => resolveRealPath(r) === resolveRealPath(dir)),
-    ).toBe(false);
-  });
-
-  it("accepts a workspace skill when using default roots", () => {
-    expect(validateChildSkills([skillPkg], defaultConfig(), dir)).toEqual([
+    expect(validateChildSkills([skillPkg], defaultConfig())).toEqual([
       resolveRealPath(skillPkg),
     ]);
   });
 
   it("rejects arbitrary non-skill files", () => {
-    const cfg = defaultConfig();
-    cfg.childSkills.allowedRoots = [dir];
-    expect(() => validateChildSkills([file], cfg)).toThrow(/SKILL\.md/);
+    expect(() => validateChildSkills([file], defaultConfig())).toThrow(
+      /SKILL\.md/,
+    );
   });
 
-  it("still rejects a skill outside every allowed root without existence oracle", () => {
-    const cfg = defaultConfig();
-    cfg.childSkills.allowedRoots = [join(dir, "nested")];
-    expect(() => validateChildSkills([skillEntry], cfg)).toThrow(/outside/);
-    // Outside paths must not leak whether they exist.
-    expect(() =>
-      validateChildSkills(["/etc/passwd"], defaultConfig()),
-    ).toThrow(/outside/);
-    expect(() =>
-      validateChildSkills(["/tmp/definitely-missing-pi-skill-xyz"], defaultConfig()),
-    ).toThrow(/outside/);
-  });
-
-  it("still rejects a missing skill path inside an allowed root", () => {
+  it("rejects missing skill paths", () => {
     expect(() =>
       validateChildSkills(
         [join(dir, "missing-skill", "SKILL.md")],
         defaultConfig(),
-        dir,
       ),
     ).toThrow(/not found/);
   });
 
-  it("materializes packages under the run dir without following symlinks", () => {
-    const cfg = defaultConfig();
-    cfg.childSkills.allowedRoots = [dir];
-    const outside = join(dir, "secret.txt");
-    writeFileSync(outside, "secret\n");
-    const link = join(skillPkg, "leak.md");
-    try {
-      symlinkSync(outside, link);
-    } catch {
-      // platforms without symlink permission — still exercise materialize
-    }
-    const validated = validateChildSkills([skillPkg], cfg);
-    const dest = join(dir, "materialized");
-    const out = materializeChildSkills(validated, dest);
-    expect(out).toHaveLength(1);
-    const matEntry = join(out[0]!, "SKILL.md");
-    expect(readFileSync(matEntry, "utf8")).toContain("Demo Skill");
-    expect(existsSync(join(out[0]!, "leak.md"))).toBe(false);
-
-    const decision = evaluateToolCall(
+  it("allows policy read of selected skillRoots only", () => {
+    const validated = validateChildSkills([skillPkg], defaultConfig());
+    const allow = evaluateToolCall(
       {
         profile: "review",
         workspace: join(dir, "worktree"),
-        artifactRoots: [dest],
+        skillRoots: validated,
       },
-      { name: "read", input: { path: matEntry } },
+      { name: "read", input: { path: skillEntry } },
     );
-    expect(decision).toEqual({ kind: "allow" });
+    expect(allow).toEqual({ kind: "allow" });
+
+    const denySibling = evaluateToolCall(
+      {
+        profile: "review",
+        workspace: join(dir, "worktree"),
+        skillRoots: validated,
+      },
+      { name: "read", input: { path: file } },
+    );
+    expect(denySibling.kind).toBe("deny");
   });
 
   it("deduplicates and enforces maxChildSkillCount", () => {
     const cfg = defaultConfig();
-    cfg.childSkills.allowedRoots = [dir];
     cfg.limits.maxChildSkillCount = 2;
     expect(validateChildSkills([skillEntry, skillPkg], cfg)).toHaveLength(1);
     const other = join(dir, "other-skill");

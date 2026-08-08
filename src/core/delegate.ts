@@ -14,10 +14,7 @@ import {
   assertVisionCapableModel,
 } from "../prompt/multimodal.js";
 import { resolveWorkspace, validateAttachmentPaths, assertGitRootAllowed } from "../workspace/roots.js";
-import {
-  materializeChildSkills,
-  validateChildSkills,
-} from "../workspace/child-skills.js";
+import { validateChildSkills } from "../workspace/child-skills.js";
 import { gitRoot, gitIsDirty, gitHead } from "../workspace/git.js";
 import { buildChangeManifest } from "../workspace/manifest.js";
 import {
@@ -133,16 +130,11 @@ export async function runDelegation(
       req.attachments ?? [],
       req.config,
     );
-    const validatedSkills = validateChildSkills(
+    const childSkills = validateChildSkills(
       req.childSkills,
       req.config,
       workspace,
     );
-    const childSkillsDir = join(dirs.input, "child-skills");
-    const childSkills = materializeChildSkills(validatedSkills, childSkillsDir);
-    if (childSkills.length) {
-      artifacts.push({ kind: "child-skills", path: childSkillsDir });
-    }
 
     const detectedModalities = detectModalitiesFromAttachments(
       attachments,
@@ -395,15 +387,9 @@ export async function runDelegation(
             workspace: execCwd,
             inScope: req.inScope,
             outOfScope: req.outOfScope,
-            // Materialized skills live under dirs.input; keep that root readable
-            // even when workspace.allowedRoots is empty / narrow.
-            artifactRoots: [
-              dirs.root,
-              dirs.input,
-              dirs.result,
-              ...(childSkills.length ? [childSkillsDir] : []),
-            ],
+            artifactRoots: [dirs.root, dirs.input, dirs.result],
             allowedRoots: req.config.workspace.allowedRoots,
+            skillRoots: childSkills,
           },
           timeoutMs: timeoutSec * 1000,
           config: req.config,

@@ -90,8 +90,6 @@ const ConfigSchemaV2 = z.object({
   childSkills: z
     .object({
       enabled: z.boolean().default(true),
-      /** Empty falls back to the conventional skill directories. */
-      allowedRoots: z.array(z.string()).default([]),
     })
     .default({}),
   limits: z

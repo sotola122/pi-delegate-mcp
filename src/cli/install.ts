@@ -11,7 +11,6 @@ import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { cursorMcpJsonPath } from "../config/paths.js";
 import { stripJsonc, loadConfig } from "../config/loader.js";
-import { resolveChildSkillRoots } from "../workspace/child-skills.js";
 import { assetsRoot, assetExists } from "../prompt/assets.js";
 import { warnDeprecatedConfig } from "../config/schema.js";
 import { getPiSdkVersion } from "../pi-sdk/version.js";
@@ -146,11 +145,6 @@ export function doctorCommand(): void {
     console.log(
       `childSkills: ${config.childSkills.enabled ? "enabled" : "disabled"}`,
     );
-    for (const root of resolveChildSkillRoots(config)) {
-      console.log(
-        `  root: ${root}${existsSync(root) ? "" : " (missing)"}`,
-      );
-    }
   } catch (err) {
     issues.push(err instanceof Error ? err.message : String(err));
   }

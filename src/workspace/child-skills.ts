@@ -1,53 +1,18 @@
-import {
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { existsSync, lstatSync, realpathSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import type { AppConfig } from "../config/schema.js";
-import { defaultChildSkillRoots, expandHome } from "../config/paths.js";
+import { expandHome } from "../config/paths.js";
 import { DelegateError } from "../core/errors.js";
 import { isPathInside, resolveRealPath } from "./roots.js";
 
 const SKILL_ENTRY = "SKILL.md";
 
-/**
- * Roots a child skill may be selected from. Empty `allowedRoots` falls back to
- * conventional skill directories. The workspace is appended only for that
- * fallback so an explicit admin allowlist stays authoritative.
- */
-export function resolveChildSkillRoots(
-  config: AppConfig,
-  workspace?: string,
-): string[] {
-  const configured = config.childSkills.allowedRoots.map(expandHome);
-  if (configured.length > 0) return configured.map((r) => resolve(r));
-  const roots = defaultChildSkillRoots().map((r) => resolve(r));
-  if (workspace) roots.push(resolve(workspace));
-  return roots;
-}
-
-function lexicalInside(root: string, candidate: string): boolean {
-  const r = resolve(expandHome(root));
-  const c = resolve(expandHome(candidate));
-  return c === r || c.startsWith(r.endsWith(sep) ? r : r + sep);
-}
-
-function isUnderAnyRoot(roots: string[], candidate: string): boolean {
-  return roots.some((root) => lexicalInside(root, candidate));
-}
-
 function skillPackageRoot(abs: string): string {
   const st = lstatSync(abs);
   if (st.isSymbolicLink()) {
     throw new DelegateError(
-      "Child skill outside allowed roots",
-      "child_skill_forbidden",
+      `Child skill ${SKILL_ENTRY} must be a regular file or directory`,
+      "child_skill_invalid",
       true,
     );
   }
@@ -81,17 +46,21 @@ function assertSkillEntry(packageRoot: string): void {
   const realPkg = resolveRealPath(packageRoot);
   if (!isPathInside(realPkg, realEntry)) {
     throw new DelegateError(
-      "Child skill outside allowed roots",
-      "child_skill_forbidden",
+      `Child skill ${SKILL_ENTRY} escapes its package directory`,
+      "child_skill_invalid",
       true,
     );
   }
 }
 
+/**
+ * Validate child skill packages. Returns package directories containing SKILL.md
+ * for Pi `additionalSkillPaths`. No allowlist — callers pick paths explicitly.
+ */
 export function validateChildSkills(
   skills: string[] | undefined,
   config: AppConfig,
-  workspace?: string,
+  _workspace?: string,
 ): string[] {
   if (!skills?.length) return [];
 
@@ -112,7 +81,6 @@ export function validateChildSkills(
     );
   }
 
-  const allowed = resolveChildSkillRoots(config, workspace);
   const out: string[] = [];
   const seen = new Set<string>();
 
@@ -125,18 +93,7 @@ export function validateChildSkills(
       );
     }
 
-    const expanded = expandHome(skill);
-    const absGuess = resolve(expanded);
-
-    // Containment before any existence probe (uniform outside response).
-    if (!isUnderAnyRoot(allowed, absGuess)) {
-      throw new DelegateError(
-        "Child skill outside allowed roots",
-        "child_skill_forbidden",
-        true,
-      );
-    }
-
+    const absGuess = resolve(expandHome(skill));
     if (!existsSync(absGuess)) {
       throw new DelegateError(
         `Child skill not found: ${skill}`,
@@ -156,23 +113,7 @@ export function validateChildSkills(
       );
     }
 
-    // Re-check after realpath so symlink escapes are rejected.
-    if (!allowed.some((root) => isPathInside(root, abs))) {
-      throw new DelegateError(
-        "Child skill outside allowed roots",
-        "child_skill_forbidden",
-        true,
-      );
-    }
-
     const packageRoot = skillPackageRoot(abs);
-    if (!allowed.some((root) => isPathInside(root, packageRoot))) {
-      throw new DelegateError(
-        "Child skill outside allowed roots",
-        "child_skill_forbidden",
-        true,
-      );
-    }
     assertSkillEntry(packageRoot);
 
     const key = resolveRealPath(packageRoot);
@@ -181,72 +122,4 @@ export function validateChildSkills(
     out.push(key);
   }
   return out;
-}
-
-/**
- * Copy validated skill packages into a run-owned directory as regular files
- * only (symlinks are skipped). Returns materialized package directories for
- * Pi `additionalSkillPaths`.
- */
-export function materializeChildSkills(
-  validatedPackageRoots: string[],
-  destRoot: string,
-): string[] {
-  if (!validatedPackageRoots.length) return [];
-  mkdirSync(destRoot, { recursive: true, mode: 0o700 });
-
-  return validatedPackageRoots.map((pkg, index) => {
-    const realPkg = resolveRealPath(pkg);
-    const slot = join(
-      destRoot,
-      `${String(index).padStart(2, "0")}-${basename(realPkg)}`,
-    );
-    mkdirSync(slot, { recursive: true, mode: 0o700 });
-    copySkillTree(realPkg, slot, realPkg);
-    if (!existsSync(join(slot, SKILL_ENTRY))) {
-      throw new DelegateError(
-        `Failed to materialize ${SKILL_ENTRY} for ${pkg}`,
-        "child_skill_invalid",
-        true,
-      );
-    }
-    return slot;
-  });
-}
-
-function copySkillTree(
-  srcDir: string,
-  destDir: string,
-  packageRoot: string,
-): void {
-  for (const name of readdirSync(srcDir)) {
-    const src = join(srcDir, name);
-    const dest = join(destDir, name);
-    let st;
-    try {
-      st = lstatSync(src);
-    } catch {
-      continue;
-    }
-    if (st.isSymbolicLink()) {
-      // Skip — closes nested symlink escapes into the materialization.
-      continue;
-    }
-    if (st.isDirectory()) {
-      const real = resolveRealPath(src);
-      if (
-        !isPathInside(packageRoot, real) &&
-        real !== resolveRealPath(packageRoot)
-      ) {
-        continue;
-      }
-      mkdirSync(dest, { recursive: true, mode: 0o700 });
-      copySkillTree(src, dest, packageRoot);
-      continue;
-    }
-    if (!st.isFile()) continue;
-    const real = resolveRealPath(src);
-    if (!isPathInside(packageRoot, real)) continue;
-    writeFileSync(dest, readFileSync(src), { mode: 0o600 });
-  }
 }

@@ -50,21 +50,7 @@ When `model` / `effort` are omitted, per-profile defaults from `assets/delegate-
 
 `childSkills` passes explicit skill paths (`SKILL.md` or a directory containing it) to the child agent. Ambient skill discovery stays off. Enabled by default.
 
-Selected packages are **copied into the run directory** before execution; the child reads only that materialization (symlinks are not followed). Paths must resolve inside an allowed root, otherwise the run fails with `child_skill_forbidden`.
-
-Default roots (when `allowedRoots` is empty): `~/.agents/skills`, `~/.cursor/skills`, `~/.cursor/skills-cursor`, `~/.claude/skills`, `~/.codex/skills`, plus the resolved workspace. An explicit `allowedRoots` list is authoritative and does **not** auto-append the workspace.
-
-```jsonc
-{
-  "version": 2,
-  "childSkills": {
-    "enabled": true,
-    "allowedRoots": ["~/.agents/skills"]
-  }
-}
-```
-
-`pi-delegate-mcp doctor` prints the effective state and roots.
+Validated packages are passed through as Pi skill paths; the delegation policy allows reading those selected packages only (no copy, no path allowlist). Disable with `childSkills.enabled: false` if needed.
 
 ## Safety
 
