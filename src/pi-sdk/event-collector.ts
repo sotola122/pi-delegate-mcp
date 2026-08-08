@@ -10,12 +10,23 @@ export interface CollectedEvents {
   diagnostics: PiDiagnostic[];
   messageTexts: string[];
   eventSummary: Array<Record<string, unknown>>;
+  truncated: boolean;
+  metadataBytes: number;
 }
 
-export function createEventCollector(): {
+export interface EventCollectorOptions {
+  maxEventMetadataBytes?: number;
+}
+
+function utf8Len(s: string): number {
+  return Buffer.byteLength(s, "utf8");
+}
+
+export function createEventCollector(opts: EventCollectorOptions = {}): {
   collector: CollectedEvents;
   listener: (event: AgentSessionEvent) => void;
 } {
+  const maxBytes = opts.maxEventMetadataBytes ?? 4_194_304;
   const collector: CollectedEvents = {
     agentStarted: false,
     agentEnded: false,
@@ -25,29 +36,64 @@ export function createEventCollector(): {
     diagnostics: [],
     messageTexts: [],
     eventSummary: [],
+    truncated: false,
+    metadataBytes: 0,
   };
 
   const toolStarts = new Map<string, number>();
+
+  const pushSummary = (entry: Record<string, unknown>): void => {
+    if (collector.truncated) return;
+    const line = JSON.stringify(entry);
+    const n = utf8Len(line) + 1;
+    if (collector.metadataBytes + n > maxBytes) {
+      collector.truncated = true;
+      collector.diagnostics.push({
+        level: "warn",
+        code: "event_metadata_truncated",
+        message: `event metadata exceeded ${maxBytes} bytes`,
+      });
+      return;
+    }
+    collector.metadataBytes += n;
+    collector.eventSummary.push(entry);
+  };
+
+  const pushMessage = (text: string): void => {
+    if (collector.truncated) return;
+    const n = utf8Len(text);
+    if (collector.metadataBytes + n > maxBytes) {
+      collector.truncated = true;
+      collector.diagnostics.push({
+        level: "warn",
+        code: "event_metadata_truncated",
+        message: `event metadata exceeded ${maxBytes} bytes`,
+      });
+      return;
+    }
+    collector.metadataBytes += n;
+    collector.messageTexts.push(text);
+  };
 
   const listener = (event: AgentSessionEvent): void => {
     switch (event.type) {
       case "agent_start":
         collector.agentStarted = true;
-        collector.eventSummary.push({ type: "agent_start" });
+        pushSummary({ type: "agent_start" });
         break;
       case "agent_end":
         collector.agentEnded = true;
         collector.willRetry = Boolean(
           (event as { willRetry?: boolean }).willRetry,
         );
-        collector.eventSummary.push({
+        pushSummary({
           type: "agent_end",
           willRetry: collector.willRetry,
         });
         break;
       case "agent_settled":
         collector.agentSettled = true;
-        collector.eventSummary.push({ type: "agent_settled" });
+        pushSummary({ type: "agent_settled" });
         break;
       case "tool_execution_start": {
         const e = event as {
@@ -56,7 +102,7 @@ export function createEventCollector(): {
         };
         const id = e.toolCallId ?? e.toolName ?? "tool";
         toolStarts.set(id, Date.now());
-        collector.eventSummary.push({
+        pushSummary({
           type: "tool_execution_start",
           tool: e.toolName,
         });
@@ -75,7 +121,7 @@ export function createEventCollector(): {
           isError: Boolean(e.isError),
           durationMs: started !== undefined ? Date.now() - started : undefined,
         });
-        collector.eventSummary.push({
+        pushSummary({
           type: "tool_execution_end",
           tool: e.toolName,
           isError: Boolean(e.isError),
@@ -88,9 +134,9 @@ export function createEventCollector(): {
           .message;
         if (msg?.role === "assistant") {
           const text = extractTextContent(msg.content);
-          if (text) collector.messageTexts.push(text);
+          if (text) pushMessage(text);
         }
-        collector.eventSummary.push({ type: "message_end", role: msg?.role });
+        pushSummary({ type: "message_end", role: msg?.role });
         break;
       }
       case "auto_retry_start":
@@ -99,7 +145,7 @@ export function createEventCollector(): {
       case "compaction_end":
       case "turn_start":
       case "turn_end":
-        collector.eventSummary.push({ type: event.type });
+        pushSummary({ type: event.type });
         break;
       default:
         break;
@@ -126,3 +172,5 @@ function extractTextContent(content: unknown): string {
   }
   return parts.join("");
 }
+
+export { truncateUtf8 } from "../util/utf8.js";

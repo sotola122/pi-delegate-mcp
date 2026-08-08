@@ -19,9 +19,10 @@ export {
   buildSanitizedShellEnvironment,
   sanitizeEnv,
 } from "./environment.js";
-export { evaluateToolCall } from "./policy-extension.js";
+export { evaluateToolCall, resolveToolPath } from "./policy-extension.js";
 export { materializeAttachments } from "./attachments.js";
 export { getPiSdkVersion } from "./version.js";
+export { truncateUtf8 } from "./event-collector.js";
 export {
   createPiExecutor,
   getPiExecutor,

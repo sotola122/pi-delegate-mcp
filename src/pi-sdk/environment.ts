@@ -11,10 +11,19 @@ const DEFAULT_PASS = [
   "TERM",
 ];
 
+/** Safe Git metadata only — not credential helpers / config overrides / SSH. */
+const GIT_ALLOWLIST = new Set([
+  "GIT_AUTHOR_NAME",
+  "GIT_AUTHOR_EMAIL",
+  "GIT_COMMITTER_NAME",
+  "GIT_COMMITTER_EMAIL",
+  "GIT_TERMINAL_PROMPT",
+]);
+
 /**
  * Build a sanitized environment for bash subprocesses.
  * Does not forward API keys / cloud credentials / PI session vars by default.
- * GIT_* and LC_* are allowed; PI_* is NOT forwarded for SDK bash isolation.
+ * Only an explicit GIT_* allowlist is forwarded; use shellEnvironment.passThrough for more.
  */
 export function buildSanitizedShellEnvironment(
   config: AppConfig,
@@ -30,7 +39,7 @@ export function buildSanitizedShellEnvironment(
     if (
       DEFAULT_PASS.includes(k) ||
       k.startsWith("LC_") ||
-      k.startsWith("GIT_") ||
+      GIT_ALLOWLIST.has(k) ||
       passThrough.includes(k)
     ) {
       out[k] = v;
@@ -39,27 +48,10 @@ export function buildSanitizedShellEnvironment(
   return out;
 }
 
-/** @deprecated Prefer buildSanitizedShellEnvironment; kept for CLI backend. */
+/** @deprecated Prefer buildSanitizedShellEnvironment. */
 export function sanitizeEnv(
   config: AppConfig,
   base: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
-  const passThrough =
-    config.shellEnvironment?.passThrough ??
-    config.environment?.passThrough ??
-    [];
-  const out: NodeJS.ProcessEnv = {};
-  for (const [k, v] of Object.entries(base)) {
-    if (v === undefined) continue;
-    if (
-      DEFAULT_PASS.includes(k) ||
-      k.startsWith("LC_") ||
-      k.startsWith("GIT_") ||
-      k.startsWith("PI_") ||
-      passThrough.includes(k)
-    ) {
-      out[k] = v;
-    }
-  }
-  return out;
+  return buildSanitizedShellEnvironment(config, base);
 }

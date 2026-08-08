@@ -394,6 +394,8 @@ export async function runDelegation(
           failures: outcome.toolCalls.filter((t) => t.isError).length,
         },
         finalOutput: outcome.finalText,
+        maxEventMetadataBytes: req.config.limits.maxEventMetadataBytes,
+        maxFinalOutputBytes: req.config.limits.maxFinalOutputBytes,
       });
       artifacts.push(...sdkArts);
 
@@ -425,13 +427,27 @@ export async function runDelegation(
       };
       attempts.push(attemptRec);
 
+      // Never retry after cancel / timeout / abort
       if (
-        req.profile === "implement" &&
-        attempt + 1 < maxAttempts &&
-        (outcome.completion !== "completed" ||
-          !lastOutput.includes("# Implement Result"))
+        outcome.cancelled ||
+        outcome.timedOut ||
+        outcome.completion === "cancelled" ||
+        outcome.completion === "timeout" ||
+        req.signal?.aborted
       ) {
-        continue;
+        break;
+      }
+
+      if (req.profile === "implement" && attempt + 1 < maxAttempts) {
+        const missingHeading = !lastOutput.includes("# Implement Result");
+        const retryableFailure =
+          outcome.completion === "incomplete" ||
+          outcome.completion === "provider_error" ||
+          outcome.completion === "tool_error" ||
+          (outcome.completion === "completed" && missingHeading);
+        if (retryableFailure || missingHeading) {
+          continue;
+        }
       }
       break;
     }

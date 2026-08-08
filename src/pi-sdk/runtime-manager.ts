@@ -1,6 +1,7 @@
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { statSync } from "node:fs";
 import { DelegateError } from "../core/errors.js";
+import { awaitWithAbort } from "../util/abort.js";
 
 type AnyModel = NonNullable<ReturnType<ModelRuntime["getModel"]>>;
 
@@ -36,7 +37,10 @@ export class ModelRuntimeManager {
 
   constructor(private readonly options: ModelRuntimeManagerOptions) {}
 
-  async get(_signal?: AbortSignal): Promise<ModelRuntime> {
+  async get(signal?: AbortSignal): Promise<ModelRuntime> {
+    if (signal?.aborted) {
+      throw new DelegateError("cancelled", "cancelled", true);
+    }
     if (!this.runtimePromise) {
       this.runtimePromise = ModelRuntime.create({
         authPath: this.options.authPath,
@@ -44,8 +48,14 @@ export class ModelRuntimeManager {
         allowModelNetwork: this.options.allowModelNetwork,
       });
     }
-    const runtime = await this.runtimePromise;
-    await this.maybeRefreshAuth(runtime);
+    const runtime = await awaitWithAbort(this.runtimePromise, signal);
+    if (signal?.aborted) {
+      throw new DelegateError("cancelled", "cancelled", true);
+    }
+    await awaitWithAbort(this.maybeRefreshAuth(runtime), signal);
+    if (signal?.aborted) {
+      throw new DelegateError("cancelled", "cancelled", true);
+    }
     return runtime;
   }
 
@@ -54,6 +64,9 @@ export class ModelRuntimeManager {
     modelId: string,
     signal?: AbortSignal,
   ): Promise<AnyModel> {
+    if (signal?.aborted) {
+      throw new DelegateError("cancelled", "cancelled", true);
+    }
     const runtime = await this.get(signal);
     const model = runtime.getModel(provider, modelId);
     if (!model) {

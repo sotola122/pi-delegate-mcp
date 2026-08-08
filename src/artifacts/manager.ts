@@ -13,6 +13,7 @@ import type { AppConfig } from "../config/schema.js";
 import { redactSecrets } from "./redact.js";
 import { assertSafeRunId } from "../core/ids.js";
 import { isPathInside } from "../workspace/roots.js";
+import { truncateUtf8 } from "../util/utf8.js";
 
 export interface RunDirs {
   runId: string;
@@ -82,15 +83,21 @@ export function saveSdkDiagnostics(
     diagnostics?: unknown;
     toolSummary?: unknown;
     finalOutput?: string;
+    maxEventMetadataBytes?: number;
+    maxFinalOutputBytes?: number;
   },
 ): Array<{ kind: string; path: string }> {
   const artifacts: Array<{ kind: string; path: string }> = [];
   const sdkDir = join(dirs.root, "sdk");
   mkdirSync(sdkDir, { recursive: true, mode: 0o700 });
 
+  const maxEvents = opts.maxEventMetadataBytes ?? 4_194_304;
+  const maxFinal = opts.maxFinalOutputBytes ?? 8_388_608;
+
   if (opts.eventSummaryJsonl !== undefined) {
+    const trunc = truncateUtf8(opts.eventSummaryJsonl, maxEvents);
     const p = join(sdkDir, "event-summary.jsonl");
-    writeArtifact(p, opts.eventSummaryJsonl);
+    writeArtifact(p, trunc.text);
     artifacts.push({ kind: "sdk.events", path: p });
   }
   if (opts.diagnostics !== undefined) {
@@ -104,8 +111,9 @@ export function saveSdkDiagnostics(
     artifacts.push({ kind: "sdk.tools", path: p });
   }
   if (opts.finalOutput !== undefined) {
+    const trunc = truncateUtf8(opts.finalOutput, maxFinal);
     const p = join(dirs.result, "output.md");
-    writeArtifact(p, opts.finalOutput);
+    writeArtifact(p, trunc.text);
     artifacts.push({ kind: "output", path: p });
   }
   return artifacts;

@@ -215,6 +215,42 @@ describe("config", () => {
     expect(parsed.version).toBe(2);
     expect(parsed.shellEnvironment.passThrough).toContain("IDF_PATH");
   });
+
+  it("preserves v2 pi fields when only environment is deprecated", async () => {
+    const { normalizeLoadedConfig } = await import(
+      "../../src/config/loader.js"
+    );
+    const normalized = normalizeLoadedConfig({
+      version: 2,
+      pi: {
+        agentDir: "/custom/agent",
+        provider: "openai-codex",
+        defaultModel: "gpt-5.6-luna",
+        allowedModels: ["gpt-5.6-sol", "gpt-5.6-luna"],
+        allowModelNetwork: true,
+      },
+      environment: { passThrough: ["IDF_PATH"] },
+    }) as Record<string, unknown>;
+    expect(normalized.version).toBe(2);
+    expect((normalized.pi as { agentDir: string }).agentDir).toBe(
+      "/custom/agent",
+    );
+    expect(
+      (normalized.pi as { allowModelNetwork: boolean }).allowModelNetwork,
+    ).toBe(true);
+    expect(
+      (normalized.shellEnvironment as { passThrough: string[] }).passThrough,
+    ).toContain("IDF_PATH");
+  });
+});
+
+describe("truncateUtf8", () => {
+  it("truncates by byte length", async () => {
+    const { truncateUtf8 } = await import("../../src/pi-sdk/event-collector.js");
+    const r = truncateUtf8("abcdefghij", 5);
+    expect(r.truncated).toBe(true);
+    expect(Buffer.byteLength(r.text, "utf8")).toBeLessThanOrEqual(5);
+  });
 });
 
 describe("result validation", () => {

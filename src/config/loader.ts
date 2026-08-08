@@ -1,6 +1,12 @@
 import { readFileSync, existsSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
-import { ConfigSchema, defaultConfig, migrateConfigV1, type AppConfig, type ConfigV1Input } from "./schema.js";
+import {
+  ConfigSchema,
+  defaultConfig,
+  migrateConfigV1,
+  type AppConfig,
+  type ConfigV1Input,
+} from "./schema.js";
 import { configPath } from "./paths.js";
 import { deepMerge } from "./merge.js";
 
@@ -43,21 +49,48 @@ export function stripJsonc(input: string): string {
   return out;
 }
 
-function normalizeLoadedConfig(parsed: unknown): unknown {
-  if (!parsed || typeof parsed !== "object") return parsed;
-  const obj = parsed as Record<string, unknown>;
+function looksLikeV1(obj: Record<string, unknown>): boolean {
+  if (obj.version === 1) return true;
+  if (obj.version === 2) return false;
+  // Missing version: v1 shape if pi.executable present and no agentDir
   if (
-    obj.version === 1 ||
-    (obj.environment && !obj.shellEnvironment) ||
-    (obj.pi &&
-      typeof obj.pi === "object" &&
-      "executable" in (obj.pi as object) &&
-      !("agentDir" in (obj.pi as object)) &&
-      obj.version !== 2)
+    obj.pi &&
+    typeof obj.pi === "object" &&
+    "executable" in (obj.pi as object) &&
+    !("agentDir" in (obj.pi as object))
   ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Normalize on-disk config before merge.
+ * - Full v1 migrate only for version 1 / detected v1 shape.
+ * - version 2 with deprecated `environment` only copies passThrough.
+ */
+export function normalizeLoadedConfig(parsed: unknown): unknown {
+  if (!parsed || typeof parsed !== "object") return parsed;
+  const obj = { ...(parsed as Record<string, unknown>) };
+
+  if (looksLikeV1(obj)) {
     return migrateConfigV1(obj as ConfigV1Input);
   }
-  return parsed;
+
+  // v2 (explicit or modern shape): preserve pi.* ; only lift environment → shellEnvironment
+  if (obj.environment && !obj.shellEnvironment) {
+    const env = obj.environment as { passThrough?: string[] };
+    obj.shellEnvironment = {
+      passThrough: env.passThrough ?? [],
+    };
+    // keep environment for warnDeprecatedConfig; schema treats it as optional
+  }
+
+  if (obj.version === undefined) {
+    obj.version = 2;
+  }
+
+  return obj;
 }
 
 export function loadConfig(path = configPath()): AppConfig {

@@ -176,18 +176,19 @@ export function migrateConfigV1(input: ConfigV1Input): Record<string, unknown> {
 export const ConfigSchema = z.preprocess((raw) => {
   if (!raw || typeof raw !== "object") return raw;
   const obj = raw as Record<string, unknown>;
-  if (obj.version === 1 || obj.version === undefined) {
-    // Treat missing version as v1 when pi.executable / environment present
-    if (
-      obj.version === 1 ||
-      (obj.environment && !obj.shellEnvironment) ||
-      (obj.pi &&
-        typeof obj.pi === "object" &&
-        "executable" in (obj.pi as object) &&
-        !("agentDir" in (obj.pi as object)))
-    ) {
-      return migrateConfigV1(obj as ConfigV1Input);
-    }
+  // Full migrate only for explicit/detected v1 — never for version 2
+  if (obj.version === 2) return obj;
+  if (obj.version === 1) {
+    return migrateConfigV1(obj as ConfigV1Input);
+  }
+  if (
+    obj.version === undefined &&
+    obj.pi &&
+    typeof obj.pi === "object" &&
+    "executable" in (obj.pi as object) &&
+    !("agentDir" in (obj.pi as object))
+  ) {
+    return migrateConfigV1(obj as ConfigV1Input);
   }
   return obj;
 }, ConfigSchemaV2);
