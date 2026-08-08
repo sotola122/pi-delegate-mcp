@@ -26,3 +26,9 @@ For each finding, include:
 - Recommendation
 
 Order findings by severity (Blocker first). If there are no concrete issues, say so explicitly. Do not pad with generic advice that ignores the corpus under review.
+
+## Acceptance
+When the task block lists `acceptance_checks`, report each with the **exact** check text:
+
+- <exact check text>: pass — <one-line evidence>
+- <exact check text>: fail — <one-line evidence>

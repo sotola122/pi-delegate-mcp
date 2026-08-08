@@ -14,6 +14,12 @@ List each command and its exit status.
 ## Outcome
 Pass / fail with evidence (key log lines, failing tests).
 
+## Acceptance
+For every `acceptance_checks` entry in the task block, one line with the **exact** check text:
+
+- <exact check text>: pass — <one-line evidence>
+- <exact check text>: fail — <one-line evidence>
+
 ## Side effects
 Compare a before/after snapshot that includes more than `git status --short`:
 - newly dirty paths

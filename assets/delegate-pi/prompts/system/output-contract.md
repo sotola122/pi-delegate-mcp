@@ -7,5 +7,12 @@ Structure your final reply with the required profile heading:
 - implement → `# Implement Result`
 - no-tools → `# Judgment Result`
 
-For every acceptance check in the task block, report evidence of pass, fail, or unknown.
-If any required check lacks evidence, state that the task is incomplete.
+When the task block lists `acceptance_checks`, you **must** include an Acceptance section that repeats each check text **exactly** and marks pass or fail:
+
+```markdown
+## Acceptance
+- <exact check text>: pass — <one-line evidence>
+- <exact check text>: fail — <one-line evidence>
+```
+
+Use only `pass` or `fail` (not vague wording). If evidence is missing for a required check, mark `fail` and say why — do not omit the line.

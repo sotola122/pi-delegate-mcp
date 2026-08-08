@@ -1,4 +1,5 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import type { ProgressCallback } from "../core/progress.js";
 import type { PiDiagnostic, ToolCallSummary } from "./types.js";
 
 export interface CollectedEvents {
@@ -16,6 +17,7 @@ export interface CollectedEvents {
 
 export interface EventCollectorOptions {
   maxEventMetadataBytes?: number;
+  onProgress?: ProgressCallback;
 }
 
 function utf8Len(s: string): number {
@@ -27,6 +29,7 @@ export function createEventCollector(opts: EventCollectorOptions = {}): {
   listener: (event: AgentSessionEvent) => void;
 } {
   const maxBytes = opts.maxEventMetadataBytes ?? 4_194_304;
+  const onProgress = opts.onProgress;
   const collector: CollectedEvents = {
     agentStarted: false,
     agentEnded: false,
@@ -79,6 +82,11 @@ export function createEventCollector(opts: EventCollectorOptions = {}): {
     switch (event.type) {
       case "agent_start":
         collector.agentStarted = true;
+        onProgress?.({
+          phase: "prompting",
+          agentStarted: true,
+          toolCalls: collector.toolCalls.length,
+        });
         pushSummary({ type: "agent_start" });
         break;
       case "agent_end":
@@ -86,6 +94,11 @@ export function createEventCollector(opts: EventCollectorOptions = {}): {
         collector.willRetry = Boolean(
           (event as { willRetry?: boolean }).willRetry,
         );
+        onProgress?.({
+          phase: "finalizing",
+          agentStarted: true,
+          toolCalls: collector.toolCalls.length,
+        });
         pushSummary({
           type: "agent_end",
           willRetry: collector.willRetry,
@@ -120,6 +133,12 @@ export function createEventCollector(opts: EventCollectorOptions = {}): {
           tool: e.toolName ?? "unknown",
           isError: Boolean(e.isError),
           durationMs: started !== undefined ? Date.now() - started : undefined,
+        });
+        onProgress?.({
+          phase: "tools",
+          agentStarted: collector.agentStarted,
+          toolCalls: collector.toolCalls.length,
+          lastTool: e.toolName ?? "unknown",
         });
         pushSummary({
           type: "tool_execution_end",

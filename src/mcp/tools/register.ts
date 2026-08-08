@@ -7,6 +7,7 @@ import {
   getRun,
   cancelRun,
   runToPublic,
+  startedRunPublic,
 } from "../../core/run-registry.js";
 import {
   startBatch,
@@ -37,6 +38,9 @@ export interface ToolContext {
   getRoots: () => string[];
 }
 
+const POLL_CONTRACT =
+  "Async: returns runId + pollAfterSeconds. Wait that many seconds, then call get_run with view=status until status is terminal; finally get_run with view=full for the result. Do not busy-poll.";
+
 function hasWritable(roles: Array<{ profile: ProfileName }>): boolean {
   return roles.some((r) => r.profile === "verify" || r.profile === "implement");
 }
@@ -46,8 +50,7 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
     "delegate_review",
     {
       title: "Delegate Review",
-      description:
-        "Start a read-only review (async). Returns runId or batchId; poll with get_run / get_batch. Use perspectives for multi-viewpoint parallel reviews.",
+      description: `Start a read-only review (async). ${POLL_CONTRACT} Perspectives return batchId; poll with get_batch.`,
       inputSchema: reviewInputSchema,
       annotations: annotations.review,
     },
@@ -103,7 +106,7 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
             timeoutSeconds: args.timeoutSeconds,
           },
         });
-        return jsonToMcpContent({ ...started, poll: "get_run" });
+        return jsonToMcpContent(startedRunPublic(started.runId));
       } catch (err) {
         return errorToMcpContent(err);
       }
@@ -114,8 +117,7 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
     "delegate_verify",
     {
       title: "Delegate Verify",
-      description:
-        "Start verification (async). Returns runId; poll with get_run.",
+      description: `Start verification (async). ${POLL_CONTRACT}`,
       inputSchema: verifyInputSchema,
       annotations: annotations.verify,
     },
@@ -140,7 +142,7 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
             timeoutSeconds: args.timeoutSeconds,
           },
         });
-        return jsonToMcpContent({ ...started, poll: "get_run" });
+        return jsonToMcpContent(startedRunPublic(started.runId));
       } catch (err) {
         return errorToMcpContent(err);
       }
@@ -151,8 +153,7 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
     "delegate_implement",
     {
       title: "Delegate Implement",
-      description:
-        "Start implement in a worktree (async). Returns runId; poll with get_run. Default delivery is patch.",
+      description: `Start implement in a worktree (async). Default delivery is patch. ${POLL_CONTRACT}`,
       inputSchema: implementInputSchema,
       annotations: annotations.implement,
     },
@@ -176,7 +177,7 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
             timeoutSeconds: args.timeoutSeconds,
           },
         });
-        return jsonToMcpContent({ ...started, poll: "get_run" });
+        return jsonToMcpContent(startedRunPublic(started.runId));
       } catch (err) {
         return errorToMcpContent(err);
       }
@@ -187,8 +188,7 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
     "delegate_judge",
     {
       title: "Delegate Judge",
-      description:
-        "Start a no-tools judgment (async). Returns runId; poll with get_run.",
+      description: `Start a no-tools judgment (async). ${POLL_CONTRACT}`,
       inputSchema: judgeInputSchema,
       annotations: annotations.judge,
     },
@@ -210,7 +210,7 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
             timeoutSeconds: args.timeoutSeconds,
           },
         });
-        return jsonToMcpContent({ ...started, poll: "get_run" });
+        return jsonToMcpContent(startedRunPublic(started.runId));
       } catch (err) {
         return errorToMcpContent(err);
       }
@@ -221,8 +221,7 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
     "delegate_manual",
     {
       title: "Delegate Manual",
-      description:
-        "Start a manual-prompt delegation under a fixed profile (async). Poll with get_run.",
+      description: `Start a manual-prompt delegation under a fixed profile (async). ${POLL_CONTRACT}`,
       inputSchema: manualInputSchema,
       annotations: annotations.manual,
     },
@@ -248,7 +247,7 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
             timeoutSeconds: args.timeoutSeconds,
           },
         });
-        return jsonToMcpContent({ ...started, poll: "get_run" });
+        return jsonToMcpContent(startedRunPublic(started.runId));
       } catch (err) {
         return errorToMcpContent(err);
       }
@@ -330,7 +329,8 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
     "get_run",
     {
       title: "Get Run",
-      description: "Poll status/result of an async delegation run.",
+      description:
+        "Poll an async delegation. Prefer view=status while running (no result payload; honor pollAfterSeconds). Use view=full only after status is terminal to fetch result/output.",
       inputSchema: getRunInputSchema,
       annotations: annotations.getRun,
     },
@@ -343,7 +343,12 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
             true,
           );
         }
-        return jsonToMcpContent(runToPublic(record));
+        const view =
+          args.view ??
+          (record.status === "running" || record.status === "queued"
+            ? "status"
+            : "full");
+        return jsonToMcpContent(runToPublic(record, view));
       } catch (err) {
         return errorToMcpContent(err);
       }
@@ -414,7 +419,7 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
     {
       title: "Smoke Test",
       description:
-        "Verify Pi Coding Agent SDK connectivity, OAuth status, provider, and model availability. Expects stdout OK.",
+        "Synchronous SDK connectivity check (stdout OK). Prefer mode=planned-tuple; provider-auth can hit MCP client timeouts. For long work use async delegate_* tools instead of smoke_test.",
       inputSchema: smokeInputSchema,
       annotations: annotations.smoke,
     },
@@ -440,7 +445,22 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
           !smoke.ok,
         );
       } catch (err) {
-        return errorToMcpContent(err);
+        const message = err instanceof Error ? err.message : String(err);
+        const looksTimedOut = /abort|timeout|timed out/i.test(message);
+        return jsonToMcpContent(
+          {
+            status: "failed",
+            ok: false,
+            error: message,
+            ...(looksTimedOut
+              ? {
+                  timed_out_client_hint:
+                    "MCP client may have cut a long sync smoke_test. Prefer mode=planned-tuple with a shorter timeout, or use async delegate_* tools.",
+                }
+              : {}),
+          },
+          true,
+        );
       }
     },
   );

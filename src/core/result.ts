@@ -58,6 +58,18 @@ export function outputHasHeading(output: string, profile: string): boolean {
   return output.includes(heading);
 }
 
+function statusFromToken(token: string): AcceptanceEvidence["status"] {
+  const t = token.toLowerCase();
+  if (t === "pass" || t === "✓" || t === "✅") return "pass";
+  if (t === "fail" || t === "✗" || t === "❌") return "fail";
+  return "unknown";
+}
+
+/**
+ * Parse per-check acceptance from model output.
+ * Prefers structured lines (`- check: pass — evidence`); falls back to
+ * `check: pass` and a short legacy window for older prose.
+ */
 export function parseAcceptanceEvidence(
   output: string,
   checks: string[],
@@ -65,19 +77,42 @@ export function parseAcceptanceEvidence(
   if (checks.length === 0) return [];
   return checks.map((check) => {
     const escaped = check.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const re = new RegExp(
-      `${escaped}[\\s\\S]{0,200}?(pass|fail|unknown|✓|✗|✅|❌)`,
+    const statusToken = "(pass|fail|unknown|✓|✗|✅|❌)";
+    const structured = new RegExp(
+      `(?:^|\\n)\\s*(?:[-*]|\\|)\\s*${escaped}\\s*(?:[:|：]|[—–-])\\s*${statusToken}\\b`,
       "i",
     );
-    const m = output.match(re);
+    let m = output.match(structured);
+    if (!m) {
+      const colon = new RegExp(
+        `${escaped}\\s*[:：]\\s*${statusToken}\\b`,
+        "i",
+      );
+      m = output.match(colon);
+    }
+    if (!m) {
+      const emDash = new RegExp(
+        `${escaped}\\s*[—–-]\\s*${statusToken}\\b`,
+        "i",
+      );
+      m = output.match(emDash);
+    }
+    if (!m) {
+      // Legacy: check then status within 80 chars (keeps "tests pass")
+      const legacy = new RegExp(
+        `${escaped}\\b[\\s\\S]{0,80}?${statusToken}\\b`,
+        "i",
+      );
+      m = output.match(legacy);
+    }
     if (!m) {
       return { check, status: "unknown" as const };
     }
-    const token = m[1]!.toLowerCase();
-    let status: AcceptanceEvidence["status"] = "unknown";
-    if (token === "pass" || token === "✓" || token === "✅") status = "pass";
-    else if (token === "fail" || token === "✗" || token === "❌") status = "fail";
-    return { check, status, evidence: m[0]!.slice(0, 200) };
+    return {
+      check,
+      status: statusFromToken(m[1]!),
+      evidence: m[0]!.slice(0, 200),
+    };
   });
 }
 

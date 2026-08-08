@@ -42,6 +42,7 @@ import {
   finalizeStatusFromOutcome,
   type AttemptRecord,
 } from "./result.js";
+import type { ProgressCallback } from "./progress.js";
 
 export interface DelegateRequest {
   profile: ProfileName;
@@ -74,6 +75,8 @@ export interface DelegateRequest {
   runId?: string;
   /** Test / advanced injection of Pi executor. */
   executor?: PiExecutor;
+  /** Heartbeat for async MCP get_run status view. */
+  onProgress?: ProgressCallback;
 }
 
 function defaultTimeout(config: AppConfig, profile: ProfileName): number {
@@ -353,6 +356,8 @@ export async function runDelegation(
       const timeoutSec =
         req.timeoutSeconds ?? defaultTimeout(req.config, req.profile);
 
+      req.onProgress?.({ phase: "init" });
+
       const outcome = await piExecutor.execute(
         {
           runId: dirs.runId,
@@ -381,6 +386,7 @@ export async function runDelegation(
           timeoutMs: timeoutSec * 1000,
           config: req.config,
           structuredCompletion: imagePlanned || modalities.includes("vision"),
+          onProgress: req.onProgress,
         },
         req.signal ?? new AbortController().signal,
       );

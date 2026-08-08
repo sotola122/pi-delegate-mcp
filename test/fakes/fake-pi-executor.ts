@@ -4,7 +4,7 @@ import type {
   PiExecutor,
   PiSmokeOutcome,
   PiSmokePlan,
-} from "./types.js";
+} from "../../src/pi-sdk/types.js";
 
 export type FakePiHandler = (
   plan: PiAttemptPlan,

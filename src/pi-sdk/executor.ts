@@ -112,6 +112,8 @@ export class SdkPiExecutor implements PiExecutor {
       const early = checkAbort();
       if (early) return early;
 
+      plan.onProgress?.({ phase: "init" });
+
       let prompt = plan.prompt;
       let images = plan.imageAttachments;
       let textAttachments = plan.textAttachments;
@@ -254,6 +256,7 @@ export class SdkPiExecutor implements PiExecutor {
         plan.config.limits.maxFinalOutputBytes ?? 8_388_608;
       const { collector, listener } = createEventCollector({
         maxEventMetadataBytes: maxEventBytes,
+        onProgress: plan.onProgress,
       });
       const unsub = session.subscribe(listener);
 
@@ -265,6 +268,7 @@ export class SdkPiExecutor implements PiExecutor {
 
       let preflightOk = true;
       try {
+        plan.onProgress?.({ phase: "prompting" });
         const imageContents = images.map((img) => ({
           type: "image" as const,
           data: img.base64,
@@ -308,6 +312,11 @@ export class SdkPiExecutor implements PiExecutor {
       }
 
       const endedAt = Date.now();
+      plan.onProgress?.({
+        phase: "finalizing",
+        agentStarted: collector.agentStarted,
+        toolCalls: collector.toolCalls.length,
+      });
       if (signal.aborted) {
         return fail("cancelled", "cancelled", "cancelled", {
           agentStarted: collector.agentStarted,

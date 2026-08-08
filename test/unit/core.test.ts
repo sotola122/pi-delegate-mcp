@@ -268,6 +268,14 @@ describe("result validation", () => {
     expect(ev[1]?.status).toBe("fail");
   });
 
+  it("parses structured Acceptance bullets", () => {
+    const ev = parseAcceptanceEvidence(
+      "## Acceptance\n- npm test exits 0: pass — 12 passed\n",
+      ["npm test exits 0"],
+    );
+    expect(ev[0]?.status).toBe("pass");
+  });
+
   it("marks incomplete when evidence missing", () => {
     const status = finalizeStatus(0, false, "# Review Result", "review", [
       { check: "x", status: "unknown" },

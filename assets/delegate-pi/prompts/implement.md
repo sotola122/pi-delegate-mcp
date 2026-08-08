@@ -14,5 +14,11 @@ What you changed and why.
 ## Tests
 Commands run and results.
 
+## Acceptance
+For every `acceptance_checks` entry in the task block, one line with the **exact** check text:
+
+- <exact check text>: pass — <one-line evidence>
+- <exact check text>: fail — <one-line evidence>
+
 ## Follow-ups
 Anything left unfinished or risky.

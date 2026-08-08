@@ -1,4 +1,5 @@
 import type { AppConfig, ProfileName } from "../config/schema.js";
+import type { ProgressCallback } from "../core/progress.js";
 
 export type ThinkingLevel =
   | "off"
@@ -60,6 +61,8 @@ export interface PiAttemptPlan {
   config: AppConfig;
   /** Prefer JSON-mode style completion checks when true (vision etc.). */
   structuredCompletion?: boolean;
+  /** Optional heartbeat for MCP poll status. */
+  onProgress?: ProgressCallback;
 }
 
 export interface ToolCallSummary {

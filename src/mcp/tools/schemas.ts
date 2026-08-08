@@ -89,6 +89,8 @@ export const smokeInputSchema = {
 
 export const getRunInputSchema = {
   runId: z.string().uuid(),
+  /** status = lightweight poll (default); full = include result payload */
+  view: z.enum(["status", "full"]).optional(),
 };
 
 export const cancelRunInputSchema = {

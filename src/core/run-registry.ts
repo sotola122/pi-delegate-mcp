@@ -11,6 +11,10 @@ import { createRunDirs, saveResultJson } from "../artifacts/manager.js";
 import { runsDir } from "../config/paths.js";
 import { DelegateError } from "./errors.js";
 import { assertSafeRunId } from "./ids.js";
+import { POLL_HINT, pollAfterSeconds, startedRunPublic } from "./poll.js";
+import type { RunProgress } from "./progress.js";
+
+export type { RunProgress, RunProgressPhase } from "./progress.js";
 
 export type RunStatus =
   | "queued"
@@ -27,6 +31,7 @@ export interface RunRecord {
   status: RunStatus;
   createdAt: number;
   updatedAt: number;
+  progress?: RunProgress;
   result?: DelegateResult;
   error?: { code: string; message: string };
   abort: AbortController;
@@ -39,10 +44,12 @@ interface PersistedStatus {
   status: RunStatus;
   createdAt: number;
   updatedAt: number;
+  progress?: RunProgress;
   error?: { code: string; message: string };
 }
 
 const runs = new Map<string, RunRecord>();
+const lastHeartbeatMs = new Map<string, number>();
 
 function statusPath(runId: string): string {
   assertSafeRunId(runId);
@@ -59,11 +66,34 @@ function persist(record: RunRecord): void {
     status: record.status,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
+    progress: record.progress,
     error: record.error,
   };
   writeFileSync(statusPath(record.runId), JSON.stringify(payload, null, 2) + "\n", {
     mode: 0o600,
   });
+}
+
+/**
+ * Heartbeat while a run is active.
+ * tool_end (phase=tools) always persists; other phases throttle to ≥10s.
+ */
+export function updateRunProgress(
+  runId: string,
+  progress: RunProgress,
+  opts?: { force?: boolean },
+): void {
+  assertSafeRunId(runId);
+  const mem = runs.get(runId);
+  if (!mem || (mem.status !== "running" && mem.status !== "queued")) return;
+  const now = Date.now();
+  const last = lastHeartbeatMs.get(runId) ?? 0;
+  const isToolTick = progress.phase === "tools";
+  if (!opts?.force && !isToolTick && now - last < 10_000) return;
+  mem.progress = progress;
+  mem.updatedAt = now;
+  lastHeartbeatMs.set(runId, now);
+  persist(mem);
 }
 
 export function getRun(runId: string): RunRecord | undefined {
@@ -91,7 +121,7 @@ export function getRun(runId: string): RunRecord | undefined {
 
 export function startRun(opts: {
   config: AppConfig;
-  request: Omit<DelegateRequest, "config" | "signal">;
+  request: Omit<DelegateRequest, "config" | "signal" | "onProgress">;
   batchId?: string;
   roleId?: string;
   runId?: string;
@@ -106,9 +136,11 @@ export function startRun(opts: {
     status: "running",
     createdAt: now,
     updatedAt: now,
+    progress: { phase: "init" },
     abort,
   };
   runs.set(dirs.runId, record);
+  lastHeartbeatMs.set(dirs.runId, now);
   persist(record);
 
   void (async () => {
@@ -118,6 +150,7 @@ export function startRun(opts: {
         config: opts.config,
         signal: abort.signal,
         runId: dirs.runId,
+        onProgress: (progress) => updateRunProgress(dirs.runId, progress),
       });
       record.result = result;
       record.status =
@@ -128,6 +161,7 @@ export function startRun(opts: {
             : result.status === "incomplete"
               ? "incomplete"
               : "failed";
+      record.progress = { phase: "done", agentStarted: true };
       record.updatedAt = Date.now();
       saveResultJson(dirs, result);
       persist(record);
@@ -146,6 +180,8 @@ export function startRun(opts: {
       }
       record.updatedAt = Date.now();
       persist(record);
+    } finally {
+      lastHeartbeatMs.delete(dirs.runId);
     }
   })();
 
@@ -174,19 +210,41 @@ export function cancelRun(runId: string): RunRecord {
   return record;
 }
 
-export function runToPublic(record: RunRecord): Record<string, unknown> {
-  return {
+export type RunPublicView = "status" | "full";
+
+export function runToPublic(
+  record: RunRecord,
+  view: RunPublicView = "full",
+): Record<string, unknown> {
+  const elapsedMs = Date.now() - record.createdAt;
+  const terminal =
+    record.status !== "running" && record.status !== "queued";
+  const base: Record<string, unknown> = {
     runId: record.runId,
     batchId: record.batchId,
     roleId: record.roleId,
     status: record.status,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
+    elapsedMs,
+    progress: record.progress,
     error: record.error,
-    result: record.result,
     poll: "get_run",
+    pollAfterSeconds: pollAfterSeconds(record.status, elapsedMs),
+  };
+  if (!terminal) {
+    base.hint = POLL_HINT;
+  }
+  if (view === "status") {
+    return base;
+  }
+  return {
+    ...base,
+    result: record.result ?? null,
   };
 }
+
+export { startedRunPublic };
 
 /**
  * On MCP server start, mark persisted running/queued runs as failed.
