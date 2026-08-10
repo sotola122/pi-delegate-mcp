@@ -101,7 +101,8 @@ export function pipelineExecCwd(
 }
 
 const batches = new Map<string, BatchRecord>();
-const HARD_MAX_TASKS = 8;
+/** Hard ceiling for tasks/roles/perspectives in one batch. */
+export const HARD_MAX_TASKS = 32;
 
 function isWritableProfile(profile: ProfileName): boolean {
   return profile === "verify" || profile === "implement";
@@ -159,8 +160,8 @@ export function getBatch(batchId: string): BatchRecord | undefined {
   }
 }
 
-function maxTasks(config: AppConfig): number {
-  return Math.min(HARD_MAX_TASKS, config.concurrency.global);
+function maxTasks(): number {
+  return HARD_MAX_TASKS;
 }
 
 function launchTask(
@@ -277,7 +278,7 @@ function validateBatchSpec(spec: BatchSpec): void {
   if (!spec.tasks.length) {
     throw new DelegateError("Batch requires at least one task", "batch_empty", true);
   }
-  const limit = maxTasks(spec.config);
+  const limit = maxTasks();
   if (spec.tasks.length > limit) {
     throw new DelegateError(
       `Batch exceeds max tasks (${spec.tasks.length} > ${limit})`,

@@ -36,8 +36,8 @@ Then restart Cursor. The server registers as `pi-delegate` in `~/.cursor/mcp.jso
 | `delegate_implement` | Implement in worktree (async; default patch) |
 | `delegate_judge` | Judge with no-tools profile (async) |
 | `delegate_manual` | Manual prompt under fixed profile (async) |
-| `delegate_batch` | Multi-task parallel/sequential batch |
-| `delegate_roles` | Role-based pipeline (implement → verify → reviews) |
+| `delegate_batch` | Multi-task parallel/sequential batch (max 32 tasks) |
+| `delegate_roles` | Role-based pipeline (implement → verify → reviews; max 32 roles) |
 | `get_run` / `cancel_run` | Poll / cancel a single run |
 | `get_batch` / `cancel_batch` | Poll / cancel a batch |
 | `smoke_test` | SDK connectivity / OAuth / provider check (`stdout` must be `OK`) |

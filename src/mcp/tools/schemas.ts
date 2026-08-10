@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { EffortSchema, ModelSchema, ProfileNameSchema } from "../../config/schema.js";
+import { HARD_MAX_TASKS } from "../../core/batch.js";
 
 export const commonFields = {
   effort: EffortSchema.optional(),
@@ -28,7 +29,7 @@ export const reviewInputSchema = {
   focus: z.array(z.string()).optional(),
   attachments: z.array(z.string()).optional(),
   childSkills: z.array(z.string()).optional(),
-  perspectives: z.array(perspectiveSchema).optional(),
+  perspectives: z.array(perspectiveSchema).max(HARD_MAX_TASKS).optional(),
   ...commonFields,
 };
 
@@ -161,6 +162,7 @@ export const batchInputSchema = {
   tasks: z
     .array(batchTaskSchema)
     .min(1)
+    .max(HARD_MAX_TASKS)
     .superRefine((tasks, ctx) => {
       for (const [i, t] of tasks.entries()) {
         try {
@@ -201,6 +203,7 @@ export const rolesInputSchema = {
   roles: z
     .array(roleSchema)
     .min(1)
+    .max(HARD_MAX_TASKS)
     .superRefine((roles, ctx) => {
       for (const [i, r] of roles.entries()) {
         try {
