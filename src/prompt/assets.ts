@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { existsSync, readFileSync } from "node:fs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const PACKAGE_NAME = "pi-delegate-mcp";
+const PACKAGE_NAME = "@sotola122/pi-delegate-mcp";
 
 /**
  * Walk upward from `start` until package.json name matches this package.

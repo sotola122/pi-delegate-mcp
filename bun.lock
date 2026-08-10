@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "pi-delegate-mcp",
+      "name": "@sotola122/pi-delegate-mcp",
       "dependencies": {
         "@earendil-works/pi-coding-agent": "0.84.0",
         "@modelcontextprotocol/sdk": "1.30.0",

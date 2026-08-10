@@ -6,11 +6,20 @@ Delegate bounded coding tasks from MCP clients (Cursor) to [Pi Coding Agent](htt
 
 - Node.js **22.19+**
 - Existing `~/.pi/agent/auth.json` (Codex OAuth) is reused — **no separate Pi binary is required**
+- A GitHub token with `read:packages` (GitHub Packages install)
 
 ## Install
 
+Point only the `@sotola122` scope at GitHub Packages (do not set a global `--registry`):
+
+```ini
+# ~/.npmrc
+@sotola122:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=<GITHUB_TOKEN with read:packages>
+```
+
 ```bash
-npm install -g pi-delegate-mcp
+npm install -g @sotola122/pi-delegate-mcp
 pi-delegate-mcp install cursor --scope global
 pi-delegate-mcp doctor
 pi-delegate-mcp auth status

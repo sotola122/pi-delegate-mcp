@@ -7,7 +7,7 @@ on:
 
 permissions:
   contents: read
-  id-token: write
+  packages: write
 
 jobs:
   publish:
@@ -20,11 +20,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          registry-url: https://registry.npmjs.org
+          registry-url: https://npm.pkg.github.com
+          scope: "@sotola122"
       - run: bun install --frozen-lockfile
       - run: bun run check:delegate-pi-assets
       - run: bun run typecheck
       - run: bun run test
       - run: bun run build
       - run: bun run verify:package
-      - run: npm publish --provenance --access public
+      - run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

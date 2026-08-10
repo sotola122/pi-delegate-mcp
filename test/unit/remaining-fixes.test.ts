@@ -475,7 +475,7 @@ describe("assetsRoot stays inside package", () => {
     );
     const pkg = findPackageRoot();
     expect(JSON.parse(readFileSync(join(pkg, "package.json"), "utf8")).name).toBe(
-      "pi-delegate-mcp",
+      "@sotola122/pi-delegate-mcp",
     );
     expect(realpathSync(assetsRoot())).toBe(
       realpathSync(join(pkg, "assets", "delegate-pi")),
