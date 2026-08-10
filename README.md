@@ -27,6 +27,16 @@ pi-delegate-mcp auth status
 
 Then restart Cursor. The server registers as `pi-delegate` in `~/.cursor/mcp.json`.
 
+## Update
+
+```bash
+pi-delegate-mcp update              # npm install -g @sotola122/pi-delegate-mcp@latest
+pi-delegate-mcp update --check      # compare installed vs registry latest
+pi-delegate-mcp update 0.2.1        # pin a version
+```
+
+Does not modify `~/.cursor/mcp.json`. Restart Cursor afterward so the MCP server reloads.
+
 ## Tools
 
 | Tool | Purpose |

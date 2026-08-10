@@ -12,12 +12,19 @@ import {
 } from "./install.js";
 import { runCommand, parseRunArgs } from "./run.js";
 import { cleanupCommand } from "./cleanup.js";
+import { updateCommand, readInstalledVersion } from "./update.js";
 import { authStatus, authLogin, authLogout } from "../pi-sdk/auth.js";
 
-const VERSION = "0.2.0";
+function packageVersion(): string {
+  try {
+    return readInstalledVersion();
+  } catch {
+    return "unknown";
+  }
+}
 
 function usage(): string {
-  return `pi-delegate-mcp ${VERSION}
+  return `pi-delegate-mcp ${packageVersion()}
 
 Usage:
   pi-delegate-mcp serve
@@ -27,6 +34,7 @@ Usage:
   pi-delegate-mcp auth logout openai-codex
   pi-delegate-mcp install cursor --scope global
   pi-delegate-mcp uninstall cursor --scope global
+  pi-delegate-mcp update [--check] [version]
   pi-delegate-mcp print-config cursor
   pi-delegate-mcp config path
   pi-delegate-mcp assets status
@@ -73,7 +81,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     return;
   }
   if (cmd === "--version" || cmd === "-V" || cmd === "version") {
-    console.log(VERSION);
+    console.log(packageVersion());
     return;
   }
 
@@ -83,6 +91,9 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       return;
     case "doctor":
       doctorCommand();
+      return;
+    case "update":
+      updateCommand(argv.slice(1));
       return;
     case "auth": {
       const config = loadConfig();
