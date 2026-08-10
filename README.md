@@ -78,6 +78,7 @@ Validated packages are passed through as Pi skill paths; the delegation policy a
 - Manual prompts cannot widen tools.
 - Ambient skills / extensions / AGENTS.md are not loaded.
 - No auto commit, push, PR, or deploy.
+- Read-only attachments may include files under built-in trusted roots such as `~/.cursor/plans` (Cursor Plan Mode), `~/.cursor/skills`, `~/.agents/skills`, and staged `delegate-pi` / run artifact dirs. These are **not** writable workspaces; implement/apply still cannot write outside the resolved workspace / `allowedRoots`.
 
 ## Config
 

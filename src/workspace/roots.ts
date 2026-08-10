@@ -1,7 +1,9 @@
 import { realpathSync, existsSync, statSync } from "node:fs";
-import { resolve, normalize, sep } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { join, resolve, normalize, sep } from "node:path";
 import { DelegateError } from "../core/errors.js";
 import type { AppConfig } from "../config/schema.js";
+import { runsDir } from "../config/paths.js";
 import { gitRoot } from "./git.js";
 
 export function resolveRealPath(path: string): string {
@@ -17,6 +19,21 @@ export function isPathInside(parent: string, child: string): boolean {
   const p = resolveRealPath(parent);
   const c = resolveRealPath(child);
   return c === p || c.startsWith(p.endsWith(sep) ? p : p + sep);
+}
+
+/**
+ * Built-in roots for read-only MCP/filesystem attachments (not writable
+ * workspaces). Cursor plans/skills and staged delegate-pi / run artifacts.
+ */
+export function trustedAttachmentRoots(): string[] {
+  const home = homedir();
+  return [
+    join(home, ".cursor", "plans"),
+    join(home, ".cursor", "skills"),
+    join(home, ".agents", "skills"),
+    join(tmpdir(), "delegate-pi"),
+    runsDir(),
+  ];
 }
 
 export function resolveWorkspace(opts: {
@@ -107,18 +124,22 @@ function assertAttachmentAllowed(
     return;
   }
 
+  if (trustedAttachmentRoots().some((r) => isPathInside(r, abs))) {
+    return;
+  }
+
   if (!workspace) {
     throw new DelegateError(
       allowed.length === 0
-        ? `Filesystem attachments require workspace.allowedRoots when no workspace is set: ${abs}`
-        : `Attachment outside allowedRoots: ${abs}`,
+        ? `Filesystem attachments require workspace.allowedRoots or a trusted attachment root when no workspace is set: ${abs}`
+        : `Attachment outside allowedRoots and trusted attachment roots: ${abs}`,
       "attachment_root_required",
       true,
     );
   }
 
   throw new DelegateError(
-    `Attachment outside workspace: ${abs}`,
+    `Attachment outside workspace, allowedRoots, and trusted attachment roots: ${abs}`,
     "attachment_escape",
     true,
   );

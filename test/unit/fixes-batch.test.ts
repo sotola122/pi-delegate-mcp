@@ -7,9 +7,10 @@ import {
 } from "../../src/workspace/roots.js";
 import { validateChildSkills } from "../../src/workspace/child-skills.js";
 import { evaluateToolCall } from "../../src/pi-sdk/policy-extension.js";
+import { materializeAttachments } from "../../src/pi-sdk/attachments.js";
 import { groupTasksForExecution } from "../../src/core/batch.js";
 import { DelegateError } from "../../src/core/errors.js";
-import { writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { writeFileSync, mkdirSync, rmSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -27,6 +28,21 @@ writeFileSync(join(skillPkg, "notes.md"), "helper\n");
 afterAll(() => {
   rmSync(dir, { recursive: true, force: true });
 });
+
+function withFakeHome<T>(tmpHome: string, fn: () => T): T {
+  const prevHome = process.env.HOME;
+  const prevProfile = process.env.USERPROFILE;
+  process.env.HOME = tmpHome;
+  process.env.USERPROFILE = tmpHome;
+  try {
+    return fn();
+  } finally {
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+    if (prevProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = prevProfile;
+  }
+}
 
 describe("A5 allowedModels final check", () => {
   it("rejects alternate model outside allowlist", () => {
@@ -56,6 +72,90 @@ describe("A3 attachments", () => {
     expect(() =>
       validateAttachmentPaths(dir, ["../../etc/passwd"], defaultConfig()),
     ).toThrow(/traversal/);
+  });
+
+  it("allows Cursor plan attachments under trusted roots", () => {
+    const tmpHome = mkdtempSync(join(tmpdir(), "pi-home-"));
+    const plans = join(tmpHome, ".cursor", "plans");
+    mkdirSync(plans, { recursive: true });
+    const plan = join(plans, "foo_abcdef12.plan.md");
+    writeFileSync(plan, "# plan\n");
+    const ws = mkdtempSync(join(tmpdir(), "pi-ws-"));
+    writeFileSync(join(ws, "readme.txt"), "ws\n");
+    try {
+      withFakeHome(tmpHome, () => {
+        const out = validateAttachmentPaths(ws, [plan], defaultConfig());
+        expect(out[0]).toBe(resolveRealPath(plan));
+        const mat = materializeAttachments({
+          paths: [plan],
+          workspace: ws,
+          config: defaultConfig(),
+        });
+        expect(mat.textAttachments).toHaveLength(1);
+      });
+    } finally {
+      rmSync(tmpHome, { recursive: true, force: true });
+      rmSync(ws, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects attachments outside workspace trusted roots and allowedRoots", () => {
+    const ws = mkdtempSync(join(tmpdir(), "pi-ws-"));
+    const outside = mkdtempSync(join(tmpdir(), "pi-secret-"));
+    const secret = join(outside, "secret.txt");
+    writeFileSync(secret, "nope\n");
+    try {
+      try {
+        validateAttachmentPaths(ws, [secret], defaultConfig());
+        expect.unreachable("expected validateAttachmentPaths to throw");
+      } catch (err) {
+        expect(err).toBeInstanceOf(DelegateError);
+        expect((err as DelegateError).code).toBe("attachment_escape");
+      }
+      try {
+        materializeAttachments({
+          paths: [secret],
+          workspace: ws,
+          config: defaultConfig(),
+        });
+        expect.unreachable("expected materializeAttachments to throw");
+      } catch (err) {
+        expect(err).toBeInstanceOf(DelegateError);
+        expect((err as DelegateError).code).toBe("attachment_escape");
+      }
+    } finally {
+      rmSync(ws, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("allows attachments inside workspace", () => {
+    const out = validateAttachmentPaths(dir, [file], defaultConfig());
+    expect(out[0]).toBe(resolveRealPath(file));
+  });
+
+  it("does not treat trusted attachment roots as writable for implement", () => {
+    const tmpHome = mkdtempSync(join(tmpdir(), "pi-home-"));
+    const plans = join(tmpHome, ".cursor", "plans");
+    mkdirSync(plans, { recursive: true });
+    const plan = join(plans, "foo_abcdef12.plan.md");
+    writeFileSync(plan, "# plan\n");
+    const ws = mkdtempSync(join(tmpdir(), "pi-ws-"));
+    try {
+      withFakeHome(tmpHome, () => {
+        expect(validateAttachmentPaths(ws, [plan], defaultConfig())[0]).toBe(
+          resolveRealPath(plan),
+        );
+        const decision = evaluateToolCall(
+          { profile: "implement", workspace: ws },
+          { name: "write", input: { path: plan, content: "x" } },
+        );
+        expect(decision.kind).toBe("deny");
+      });
+    } finally {
+      rmSync(tmpHome, { recursive: true, force: true });
+      rmSync(ws, { recursive: true, force: true });
+    }
   });
 });
 

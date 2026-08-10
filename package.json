@@ -1,6 +1,6 @@
 {
   "name": "@sotola122/pi-delegate-mcp",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Delegate bounded coding tasks from MCP clients to Pi Coding Agent",
   "type": "module",
   "bin": {

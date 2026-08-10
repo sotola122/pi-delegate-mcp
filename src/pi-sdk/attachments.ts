@@ -2,7 +2,7 @@ import { readFileSync, statSync, realpathSync } from "node:fs";
 import { extname } from "node:path";
 import type { AppConfig } from "../config/schema.js";
 import { DelegateError } from "../core/errors.js";
-import { isPathInside } from "../workspace/roots.js";
+import { isPathInside, trustedAttachmentRoots } from "../workspace/roots.js";
 import type {
   MaterializedImageAttachment,
   MaterializedTextAttachment,
@@ -69,17 +69,14 @@ export function materializeAttachments(opts: {
       ...(opts.workspace ? [opts.workspace] : []),
       ...(opts.allowedRoots ?? []),
       ...(opts.config.workspace.allowedRoots ?? []),
+      ...trustedAttachmentRoots(),
     ];
     if (roots.length && !roots.some((r) => isPathInside(r, real))) {
-      // Allow run artifact dirs even if outside workspace (manifest paths)
-      const underRuns = real.includes("/.pi-delegate/") || real.includes("/runs/");
-      if (!underRuns) {
-        throw new DelegateError(
-          `Attachment outside allowed roots: ${real}`,
-          "attachment_escape",
-          true,
-        );
-      }
+      throw new DelegateError(
+        `Attachment outside workspace, allowedRoots, and trusted attachment roots: ${real}`,
+        "attachment_escape",
+        true,
+      );
     }
 
     const st = statSync(real);
