@@ -1,9 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AppConfig, ProfileName } from "../../config/schema.js";
-import { runSmokeTest } from "../../pi-sdk/smoke.js";
-import { resolveProvider } from "../../core/provider.js";
 import {
   startRun,
+  startSmoke,
   getRun,
   cancelRun,
   runToPublic,
@@ -420,50 +419,23 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
     "smoke_test",
     {
       title: "Smoke Test",
-      description:
-        "Synchronous SDK connectivity check (stdout OK). Prefer mode=planned-tuple; provider-auth can hit MCP client timeouts. For long work use async delegate_* tools instead of smoke_test.",
+      description: `Start an SDK connectivity check (stdout OK). ${POLL_CONTRACT}`,
       inputSchema: smokeInputSchema,
       annotations: annotations.smoke,
     },
-    async (args, extra) => {
+    async (args) => {
       try {
-        const resolved =
-          args.mode === "planned-tuple"
-            ? resolveProvider({
-                config: ctx.config,
-                profile: args.profile,
-                effort: args.effort,
-                model: args.model,
-              })
-            : undefined;
-        const smoke = await runSmokeTest({
+        const started = startSmoke({
           config: ctx.config,
           mode: args.mode,
-          resolved,
+          profile: args.profile,
+          effort: args.effort,
+          model: args.model,
           timeoutSeconds: args.timeoutSeconds,
-          signal: extra.signal,
         });
-        return jsonToMcpContent(
-          { status: smoke.ok ? "success" : "failed", ...smoke },
-          !smoke.ok,
-        );
+        return jsonToMcpContent(startedRunPublic(started.runId));
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        const looksTimedOut = /abort|timeout|timed out/i.test(message);
-        return jsonToMcpContent(
-          {
-            status: "failed",
-            ok: false,
-            error: message,
-            ...(looksTimedOut
-              ? {
-                  timed_out_client_hint:
-                    "MCP client may have cut a long sync smoke_test. Prefer mode=planned-tuple with a shorter timeout, or use async delegate_* tools.",
-                }
-              : {}),
-          },
-          true,
-        );
+        return errorToMcpContent(err);
       }
     },
   );

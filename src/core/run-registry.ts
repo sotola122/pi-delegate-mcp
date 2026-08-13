@@ -1,18 +1,20 @@
 import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { AppConfig } from "../config/schema.js";
+import type { AppConfig, Effort, AllowedModel, ProfileName } from "../config/schema.js";
 import {
   runDelegation,
   type DelegateRequest,
 } from "./delegate.js";
 import type { DelegateResult } from "./result.js";
-import { createRunDirs, saveResultJson } from "../artifacts/manager.js";
+import { createRunDirs, saveResultJson, writeArtifact } from "../artifacts/manager.js";
 import { runsDir } from "../config/paths.js";
 import { DelegateError } from "./errors.js";
 import { assertSafeRunId } from "./ids.js";
 import { POLL_HINT, pollAfterSeconds, startedRunPublic } from "./poll.js";
 import type { RunProgress } from "./progress.js";
+import { resolveProvider } from "./provider.js";
+import { runSmokeTest } from "../pi-sdk/smoke.js";
 
 export type { RunProgress, RunProgressPhase } from "./progress.js";
 
@@ -164,6 +166,149 @@ export function startRun(opts: {
       record.progress = { phase: "done", agentStarted: true };
       record.updatedAt = Date.now();
       saveResultJson(dirs, result);
+      persist(record);
+    } catch (err) {
+      if (abort.signal.aborted) {
+        record.status = "cancelled";
+      } else if (err instanceof DelegateError) {
+        record.status = err.infrastructure ? "failed" : "incomplete";
+        record.error = { code: err.code, message: err.message };
+      } else {
+        record.status = "failed";
+        record.error = {
+          code: "internal_error",
+          message: err instanceof Error ? err.message : String(err),
+        };
+      }
+      record.updatedAt = Date.now();
+      persist(record);
+    } finally {
+      lastHeartbeatMs.delete(dirs.runId);
+    }
+  })();
+
+  return { runId: dirs.runId, status: "running" };
+}
+
+export function startSmoke(opts: {
+  config: AppConfig;
+  mode: "provider-auth" | "planned-tuple";
+  profile?: ProfileName;
+  effort?: Effort;
+  model?: AllowedModel;
+  timeoutSeconds?: number;
+  runId?: string;
+}): { runId: string; status: "running" } {
+  const dirs = createRunDirs(opts.runId ?? randomUUID());
+  const abort = new AbortController();
+  const now = Date.now();
+  const record: RunRecord = {
+    runId: dirs.runId,
+    status: "running",
+    createdAt: now,
+    updatedAt: now,
+    progress: { phase: "init" },
+    abort,
+  };
+  runs.set(dirs.runId, record);
+  lastHeartbeatMs.set(dirs.runId, now);
+  persist(record);
+
+  void (async () => {
+    const startedAt = Date.now();
+    try {
+      const resolved =
+        opts.mode === "planned-tuple"
+          ? resolveProvider({
+              config: opts.config,
+              profile: opts.profile,
+              effort: opts.effort,
+              model: opts.model,
+            })
+          : undefined;
+      const smoke = await runSmokeTest({
+        config: opts.config,
+        mode: opts.mode,
+        resolved,
+        timeoutSeconds: opts.timeoutSeconds,
+        signal: abort.signal,
+      });
+      const durationMs = Date.now() - startedAt;
+      const cancelled =
+        abort.signal.aborted || record.status === "cancelled";
+      const outputPath = join(dirs.result, "output.md");
+      writeArtifact(outputPath, smoke.stdout ?? "");
+      const resultPath = join(dirs.result, "result.json");
+      const result: DelegateResult = {
+        runId: dirs.runId,
+        status: cancelled
+          ? "cancelled"
+          : smoke.ok
+            ? "success"
+            : "failed",
+        profile: "no-tools",
+        provider: smoke.provider,
+        model: smoke.model,
+        thinking: smoke.thinking,
+        delivery: "none",
+        output: smoke.stdout,
+        acceptance: [
+          {
+            check: "stdout is exactly OK",
+            status: cancelled ? "unknown" : smoke.ok ? "pass" : "fail",
+            evidence: smoke.stdout.trim(),
+          },
+        ],
+        sideEffects: [],
+        artifacts: [
+          { kind: "output", path: outputPath },
+          { kind: "result", path: resultPath },
+        ],
+        attempts: [
+          {
+            backend:
+              smoke.backend === "sdk" || smoke.backend === "fake"
+                ? smoke.backend
+                : "sdk",
+            provider: smoke.provider,
+            model: smoke.model,
+            thinking: smoke.thinking,
+            completion: cancelled
+              ? "cancelled"
+              : smoke.ok
+                ? "completed"
+                : "failed",
+            agentStarted: !cancelled && smoke.ok,
+            agentEnded: !cancelled && smoke.ok,
+            toolCalls: 0,
+            toolFailures: 0,
+            exitCode: smoke.exitCode,
+            status: cancelled
+              ? "cancelled"
+              : smoke.ok
+                ? "completed"
+                : "failed",
+            durationMs,
+            ...(smoke.ok || cancelled
+              ? {}
+              : {
+                  error: {
+                    code: "smoke_failed",
+                    message: smoke.stderr.trim() || "stdout was not OK",
+                  },
+                }),
+          },
+        ],
+        durationMs,
+      };
+      saveResultJson(dirs, result);
+      record.result = result;
+      record.status = result.status;
+      record.progress = {
+        phase: "done",
+        agentStarted: !cancelled && smoke.ok,
+      };
+      record.updatedAt = Date.now();
       persist(record);
     } catch (err) {
       if (abort.signal.aborted) {

@@ -11,13 +11,24 @@ export type FakePiHandler = (
   signal: AbortSignal,
 ) => Promise<Partial<PiAttemptOutcome> & { finalText: string }>;
 
+export type FakeSmokeHandler = (
+  plan: PiSmokePlan,
+  signal: AbortSignal,
+) => Promise<Partial<PiSmokeOutcome>>;
+
 export class FakePiExecutor implements PiExecutor {
-  constructor(
-    private readonly handler: FakePiHandler = async (plan) => ({
-      finalText: `# ${heading(plan.profile)}\n\nOK\n`,
-      completion: "completed",
-    }),
-  ) {}
+  private readonly handler: FakePiHandler;
+  private readonly smokeHandler?: FakeSmokeHandler;
+
+  constructor(handler?: FakePiHandler, smokeHandler?: FakeSmokeHandler) {
+    this.handler =
+      handler ??
+      (async (plan) => ({
+        finalText: `# ${heading(plan.profile)}\n\nOK\n`,
+        completion: "completed",
+      }));
+    this.smokeHandler = smokeHandler;
+  }
 
   async execute(
     plan: PiAttemptPlan,
@@ -75,8 +86,34 @@ export class FakePiExecutor implements PiExecutor {
 
   async smoke(
     plan: PiSmokePlan,
-    _signal?: AbortSignal,
+    signal?: AbortSignal,
   ): Promise<PiSmokeOutcome> {
+    const sig = signal ?? new AbortController().signal;
+    if (this.smokeHandler) {
+      const partial = await this.smokeHandler(plan, sig);
+      return {
+        ok: partial.ok ?? true,
+        stdout: partial.stdout ?? "OK\n",
+        stderr: partial.stderr ?? "",
+        exitCode: partial.exitCode ?? (partial.ok === false ? 1 : 0),
+        provider: partial.provider ?? plan.provider,
+        model: partial.model ?? plan.model,
+        thinking: partial.thinking ?? plan.thinking,
+        backend: "fake",
+      };
+    }
+    if (sig.aborted) {
+      return {
+        ok: false,
+        stdout: "",
+        stderr: "cancelled",
+        exitCode: 1,
+        provider: plan.provider,
+        model: plan.model,
+        thinking: plan.thinking,
+        backend: "fake",
+      };
+    }
     return {
       ok: true,
       stdout: "OK\n",

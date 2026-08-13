@@ -170,7 +170,7 @@ export function doctorCommand(): void {
   } else {
     console.log("---");
     console.log(
-      "OK (OAuth via ModelRuntime; run smoke_test or: pi-delegate-mcp auth status)",
+      "OK (OAuth via ModelRuntime; run: pi-delegate-mcp smoke  or MCP smoke_test)",
     );
   }
 }

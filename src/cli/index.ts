@@ -11,6 +11,7 @@ import {
   doctorCommand,
 } from "./install.js";
 import { runCommand, parseRunArgs } from "./run.js";
+import { smokeCommand } from "./smoke.js";
 import { cleanupCommand } from "./cleanup.js";
 import { updateCommand, readInstalledVersion } from "./update.js";
 import { authStatus, authLogin, authLogout } from "../pi-sdk/auth.js";
@@ -39,6 +40,7 @@ Usage:
   pi-delegate-mcp config path
   pi-delegate-mcp assets status
   pi-delegate-mcp cleanup
+  pi-delegate-mcp smoke [--mode planned-tuple|provider-auth] [options]
   pi-delegate-mcp run --profile <name> --objective <text> [options]
   pi-delegate-mcp --version
   pi-delegate-mcp --help
@@ -149,6 +151,9 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       return;
     case "run":
       await runCommand(parseRunArgs(argv.slice(1)));
+      return;
+    case "smoke":
+      await smokeCommand(argv.slice(1));
       return;
     default:
       console.error(`Unknown command: ${cmd}`);

@@ -50,9 +50,11 @@ Does not modify `~/.cursor/mcp.json`. Restart Cursor afterward so the MCP server
 | `delegate_roles` | Role-based pipeline (implement → verify → reviews; max 32 roles) |
 | `get_run` / `cancel_run` | Poll / cancel a single run |
 | `get_batch` / `cancel_batch` | Poll / cancel a batch |
-| `smoke_test` | SDK connectivity / OAuth / provider check (`stdout` must be `OK`) |
+| `smoke_test` | SDK connectivity / OAuth / provider check (async; poll `get_run`; `stdout` must be `OK`) |
 
-Long-running tools return `{ status: "running", runId|batchId }` immediately. Poll with `get_run` / `get_batch` until complete (avoids Cursor MCP client timeouts).
+Long-running tools — including `smoke_test` — return `{ status: "running", runId|batchId }` immediately. Poll with `get_run` / `get_batch` until complete (avoids Cursor MCP client timeouts).
+
+CLI (sync, for a terminal): `pi-delegate-mcp smoke [--mode planned-tuple|provider-auth]`.
 
 ## Effort
 

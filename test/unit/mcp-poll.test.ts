@@ -1,8 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { pollAfterSeconds, startedRunPublic, POLL_HINT } from "../../src/core/poll.js";
 import { parseAcceptanceEvidence } from "../../src/core/result.js";
 import {
   startRun,
+  startSmoke,
   getRun,
   runToPublic,
   updateRunProgress,
@@ -10,6 +11,8 @@ import {
 } from "../../src/core/run-registry.js";
 import { defaultConfig } from "../../src/config/schema.js";
 import { FakePiExecutor } from "../fakes/fake-pi-executor.js";
+import { setPiExecutorForTests } from "../../src/pi-sdk/factory.js";
+import { DelegateError } from "../../src/core/errors.js";
 
 describe("pollAfterSeconds", () => {
   it("stages 15 → 30 → 60 while running", () => {
@@ -119,5 +122,82 @@ describe("runToPublic views and heartbeat", () => {
 
     release!();
     cancelRun(started.runId);
+  });
+});
+
+describe("startSmoke", () => {
+  afterEach(() => {
+    setPiExecutorForTests(undefined);
+  });
+
+  it("returns immediately and reports success via get_run", async () => {
+    setPiExecutorForTests(new FakePiExecutor());
+    const started = startSmoke({
+      config: defaultConfig(),
+      mode: "planned-tuple",
+    });
+    expect(started.status).toBe("running");
+    const running = getRun(started.runId);
+    expect(running?.status).toBe("running");
+    const statusView = runToPublic(running!, "status");
+    expect(statusView.result).toBeUndefined();
+    expect(statusView.poll).toBe("get_run");
+    expect(statusView.pollAfterSeconds).toBe(15);
+
+    let done = getRun(started.runId);
+    for (let i = 0; i < 50 && done?.status === "running"; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+      done = getRun(started.runId);
+    }
+    expect(done?.status).toBe("success");
+    const full = runToPublic(done!, "full");
+    const result = full.result as { output: string; status: string };
+    expect(result.status).toBe("success");
+    expect(result.output.trim()).toBe("OK");
+  });
+
+  it("cancel while smoke is running marks the run cancelled", async () => {
+    let entered = false;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    setPiExecutorForTests(
+      new FakePiExecutor(undefined, async (_plan, signal) => {
+        entered = true;
+        if (signal.aborted) {
+          throw new DelegateError("cancelled", "cancelled", true);
+        }
+        await new Promise<void>((resolve, reject) => {
+          const onAbort = () => {
+            reject(new DelegateError("cancelled", "cancelled", true));
+          };
+          signal.addEventListener("abort", onAbort, { once: true });
+          void gate.then(() => {
+            signal.removeEventListener("abort", onAbort);
+            resolve();
+          });
+        });
+        return { ok: true, stdout: "OK\n" };
+      }),
+    );
+
+    const started = startSmoke({
+      config: defaultConfig(),
+      mode: "provider-auth",
+    });
+    for (let i = 0; i < 50 && !entered; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(entered).toBe(true);
+
+    cancelRun(started.runId);
+    let done = getRun(started.runId);
+    for (let i = 0; i < 50 && done?.status === "running"; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+      done = getRun(started.runId);
+    }
+    expect(done?.status).toBe("cancelled");
+    release();
   });
 });

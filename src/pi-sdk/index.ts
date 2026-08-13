@@ -28,4 +28,4 @@ export {
   getPiExecutor,
   setPiExecutorForTests,
 } from "./factory.js";
-export { ModelRuntimeManager, getSharedRuntimeManager } from "./runtime-manager.js";
+export { ModelRuntimeManager, getSharedRuntimeManager, resetSharedRuntimeManagerForTests } from "./runtime-manager.js";
