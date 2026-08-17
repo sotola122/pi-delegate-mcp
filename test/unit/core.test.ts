@@ -249,6 +249,16 @@ describe("config", () => {
     expect(defaultConfig().sdk.writableToolExecution).toBe("sequential");
   });
 
+  it("defaults delegated run timeout to 3 hours per profile", () => {
+    const timeouts = defaultConfig().limits.timeoutSeconds;
+    expect(timeouts).toEqual({
+      review: 10800,
+      verify: 10800,
+      implement: 10800,
+      "no-tools": 10800,
+    });
+  });
+
   it("migrates v1 config", () => {
     const migrated = migrateConfigV1({
       version: 1,

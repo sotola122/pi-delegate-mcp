@@ -14,6 +14,9 @@ export const ProfileNameSchema = z.enum([
 ]);
 export type ProfileName = z.infer<typeof ProfileNameSchema>;
 
+/** Wall-clock cap for a delegated Pi run (3h). Safety kill for hung children, not a duration estimate. */
+export const DEFAULT_TIMEOUT_SECONDS = 3 * 60 * 60;
+
 const ConfigSchemaV2 = z.object({
   version: z.literal(2).default(2),
   pi: z
@@ -96,10 +99,11 @@ const ConfigSchemaV2 = z.object({
     .object({
       timeoutSeconds: z
         .object({
-          review: z.number().default(1200),
-          verify: z.number().default(1800),
-          implement: z.number().default(2400),
-          "no-tools": z.number().default(900),
+          // Hang kill, not an ETA. Delegated runs are long and unpredictable.
+          review: z.number().default(DEFAULT_TIMEOUT_SECONDS),
+          verify: z.number().default(DEFAULT_TIMEOUT_SECONDS),
+          implement: z.number().default(DEFAULT_TIMEOUT_SECONDS),
+          "no-tools": z.number().default(DEFAULT_TIMEOUT_SECONDS),
         })
         .default({}),
       maxPromptBytes: z.number().default(262144),
