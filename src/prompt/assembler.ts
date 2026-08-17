@@ -14,6 +14,8 @@ export interface AssembleOptions {
   manualPrompt?: string;
   promptMode?: "append" | "replace";
   maxBytes?: number;
+  /** Skip static profile/safety bodies; keep per-run deltas. */
+  resume?: boolean;
 }
 
 const PROFILE_PROMPT: Record<ProfileName, string> = {
@@ -29,7 +31,8 @@ const MODALITY_ORDER: Modality[] = ["vision", "document", "browser"];
 export function assemblePrompt(opts: AssembleOptions): string {
   const safety = readAsset("prompts/system/safety.md").trim();
   const outputContract = readAsset("prompts/system/output-contract.md").trim();
-  const parts: string[] = [safety];
+  const resume = Boolean(opts.resume);
+  const parts: string[] = resume ? [] : [safety];
 
   const mode = opts.promptMode ?? "append";
 
@@ -44,7 +47,9 @@ export function assemblePrompt(opts: AssembleOptions): string {
     parts.push(opts.manualPrompt.trim());
     parts.push(outputContract);
   } else {
-    parts.push(readAsset(PROFILE_PROMPT[opts.profile]).trim());
+    if (!resume) {
+      parts.push(readAsset(PROFILE_PROMPT[opts.profile]).trim());
+    }
 
     if (assetExists("references/multimodal.md") && (opts.modalities?.length ?? 0) > 0) {
       parts.push(readAsset("references/multimodal.md").trim());

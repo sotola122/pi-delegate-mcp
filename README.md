@@ -52,9 +52,11 @@ Does not modify `~/.cursor/mcp.json`. Restart Cursor afterward so the MCP server
 | `get_batch` / `cancel_batch` | Poll / cancel a batch |
 | `smoke_test` | SDK connectivity / OAuth / provider check (async; poll `get_run`; `stdout` must be `OK`) |
 
-Long-running tools — including `smoke_test` — return `{ status: "running", runId|batchId }` immediately. Poll with `get_run` / `get_batch` until complete (avoids Cursor MCP client timeouts).
+Long-running tools — including `smoke_test` — return `{ status: "running", runId|batchId }` immediately. Poll with `get_run` / `get_batch` until complete (avoids Cursor MCP client timeouts). When sessions are enabled (default), the start payload also includes `sessionId`. Pass that id back on the next **same-role** call (`delegate_review` → `delegate_review`, etc.) so Pi can reuse the conversation cache. Cross-role reuse is rejected. `smoke_test` never persists a session.
 
-CLI (sync, for a terminal): `pi-delegate-mcp smoke [--mode planned-tuple|provider-auth]`.
+Sessions live under `<workspace>/.pi-delegate/sessions/` (gitignored, `0700` / `0600`). Disable with `sessions.enabled: false`. Concurrent follow-ups on the same id fail with `session_busy`.
+
+CLI (sync, for a terminal): `pi-delegate-mcp smoke [--mode planned-tuple|provider-auth]`. Resume a CLI run with `--session-id <uuid>`.
 
 ## Effort
 

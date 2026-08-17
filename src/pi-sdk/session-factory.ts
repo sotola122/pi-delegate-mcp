@@ -36,7 +36,11 @@ export async function createDelegationSession(opts: {
   const cwd = plan.cwd ?? process.cwd();
   const agentDir = plan.config.pi.agentDir ?? getAgentDir();
   const settingsManager = SettingsManager.inMemory(buildSdkSettings(plan));
-  const sessionManager = SessionManager.inMemory(cwd);
+  const handle = plan.sessionHandle;
+  const sessionManager =
+    handle && handle.kind !== "memory"
+      ? SessionManager.open(handle.jsonlPath, handle.sessionDir, cwd)
+      : SessionManager.inMemory(cwd);
   const resourceLoader = await createDelegationResourceLoader({
     plan,
     settingsManager,

@@ -16,6 +16,7 @@ export interface RunCliArgs {
   acceptanceChecks?: string[];
   inScope?: string[];
   timeoutSeconds?: number;
+  sessionId?: string;
 }
 
 export async function runCommand(args: RunCliArgs): Promise<void> {
@@ -37,6 +38,7 @@ export async function runCommand(args: RunCliArgs): Promise<void> {
     acceptanceChecks: args.acceptanceChecks,
     inScope: args.inScope,
     timeoutSeconds: args.timeoutSeconds,
+    sessionId: args.sessionId,
   });
 
   console.log(JSON.stringify(result, null, 2));
@@ -94,5 +96,6 @@ export function parseRunArgs(argv: string[]): RunCliArgs {
     timeoutSeconds: out["timeout-seconds"]
       ? Number(out["timeout-seconds"])
       : undefined,
+    sessionId: out["session-id"] ? String(out["session-id"]) : undefined,
   };
 }

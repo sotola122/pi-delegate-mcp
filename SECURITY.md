@@ -15,6 +15,7 @@ Please open a private security advisory on GitHub or email the maintainer. Do no
 - Artifacts use restrictive permissions (`0700` / `0600`).
 - Assembled prompts are not stored by default.
 - Secrets are redacted from returned output.
+- Persistent Pi sessions are stored under the destination workspace at `.pi-delegate/sessions/<sessionId>/` (directory `0700`, files `0600`, a `*` gitignore in the sessions root). Session ids must be UUIDs; resolved paths must stay under the sessions root. Symlink escapes are rejected.
 
 ## Sandbox note
 

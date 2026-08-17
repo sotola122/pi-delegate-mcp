@@ -1,5 +1,6 @@
 import type { AppConfig, ProfileName } from "../config/schema.js";
 import type { ProgressCallback } from "../core/progress.js";
+import type { SessionHandle } from "./session-store.js";
 
 export type ThinkingLevel =
   | "off"
@@ -39,6 +40,7 @@ export interface DelegationPolicy {
   allowedRoots?: string[];
   /** Selected child-skill package roots — readable without widening workspace roots. */
   skillRoots?: string[];
+  destinationWorkspace?: string;
 }
 
 export interface PiAttemptPlan {
@@ -65,6 +67,7 @@ export interface PiAttemptPlan {
   structuredCompletion?: boolean;
   /** Optional heartbeat for MCP poll status. */
   onProgress?: ProgressCallback;
+  sessionHandle?: SessionHandle;
 }
 
 export interface ToolCallSummary {

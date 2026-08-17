@@ -13,7 +13,13 @@ import {
   mergeModalities,
   assertVisionCapableModel,
 } from "../prompt/multimodal.js";
-import { resolveWorkspace, validateAttachmentPaths, assertGitRootAllowed } from "../workspace/roots.js";
+import {
+  resolveWorkspace,
+  validateAttachmentPaths,
+  assertGitRootAllowed,
+  isPathInside,
+  resolveRealPath,
+} from "../workspace/roots.js";
 import { validateChildSkills } from "../workspace/child-skills.js";
 import { gitRoot, gitIsDirty, gitHead } from "../workspace/git.js";
 import { buildChangeManifest } from "../workspace/manifest.js";
@@ -35,6 +41,7 @@ import {
 } from "../artifacts/manager.js";
 import { redactSecrets } from "../artifacts/redact.js";
 import { join, relative } from "node:path";
+import { existsSync } from "node:fs";
 import { getPiExecutor } from "../pi-sdk/factory.js";
 import { mapProfileToSdkTools } from "../pi-sdk/profile-mapper.js";
 import type { PiExecutor, ThinkingLevel } from "../pi-sdk/types.js";
@@ -43,6 +50,13 @@ import {
   type AttemptRecord,
 } from "./result.js";
 import type { ProgressCallback } from "./progress.js";
+import { prepareRunSession } from "./session-prepare.js";
+import {
+  setSessionWorktreePath,
+  type SessionHandle,
+  type SessionLock,
+  type SessionMeta,
+} from "../pi-sdk/session-store.js";
 
 export interface DelegateRequest {
   profile: ProfileName;
@@ -77,6 +91,20 @@ export interface DelegateRequest {
   executor?: PiExecutor;
   /** Heartbeat for async MCP get_run status view. */
   onProgress?: ProgressCallback;
+  sessionId?: string;
+  destinationWorkspace?: string;
+  sessionHandle?: SessionHandle;
+  sessionMeta?: SessionMeta;
+  sessionLock?: SessionLock;
+}
+
+function publicSessionId(handle?: SessionHandle): string | undefined {
+  if (!handle || handle.kind === "memory") return undefined;
+  return handle.sessionId;
+}
+
+function persistImplementWorktree(handle?: SessionHandle): boolean {
+  return Boolean(handle && handle.kind !== "memory");
 }
 
 function defaultTimeout(config: AppConfig, profile: ProfileName): number {
@@ -93,6 +121,33 @@ export async function runDelegation(
   let locks: LockHandle[] = [];
   let cleanupWorktree: { repoRoot: string; path: string } | undefined;
   let retainWorktree = false;
+  let ownSessionLock: SessionLock | undefined;
+  const prepared =
+    req.sessionHandle !== undefined
+      ? {
+          handle: req.sessionHandle,
+          meta: req.sessionMeta,
+          lock: req.sessionLock,
+          destinationWorkspace: req.destinationWorkspace,
+        }
+      : prepareRunSession({
+          config: req.config,
+          profile: req.profile,
+          workspace: req.workspace,
+          destinationWorkspace: req.destinationWorkspace,
+          mcpRoots: req.mcpRoots,
+          sessionId: req.sessionId,
+          effort: req.effort,
+          model: req.model,
+          runId: dirs.runId,
+          imageInputPlanned: req.imageInputPlanned,
+          useImplementAlternate: req.useImplementAlternate,
+        });
+  if (!req.sessionLock) ownSessionLock = prepared.lock;
+  const sessionHandle = prepared.handle;
+  const sessionMeta = prepared.meta;
+  const sessionId = publicSessionId(sessionHandle);
+  const destinationWorkspace = prepared.destinationWorkspace;
 
   try {
     // Manual policy
@@ -196,6 +251,9 @@ export async function runDelegation(
       }
     }
 
+    const persistImpl =
+      req.profile === "implement" && persistImplementWorktree(sessionHandle);
+
     if (workspaceMode === "worktree") {
       if (!workspace || !repoRoot) {
         throw new DelegateError(
@@ -206,19 +264,53 @@ export async function runDelegation(
       }
       baselineSha = gitHead(workspace) ?? undefined;
       try {
-        const wt = createDetachedWorktree(repoRoot, dirs.runId, baselineSha);
-        worktreePath = wt.path;
-        cleanupWorktree = { repoRoot, path: worktreePath };
-        if (gitIsDirty(workspace)) {
-          materializeDirtyState(workspace, worktreePath);
+        if (persistImpl && sessionHandle.kind === "resume") {
+          const stored = sessionMeta?.worktreePath;
+          if (!stored || !existsSync(stored)) {
+            throw new DelegateError(
+              "Session worktree is missing; start a new implement session",
+              "session_worktree_missing",
+              true,
+            );
+          }
+          const realWt = resolveRealPath(stored);
+          if (!isPathInside(repoRoot, realWt)) {
+            throw new DelegateError(
+              "Session worktree escapes the git root",
+              "session_path_escape",
+              true,
+            );
+          }
+          worktreePath = realWt;
+          cleanupWorktree = { repoRoot, path: worktreePath };
+          retainWorktree = true;
+          initialTreeSha = snapshotWorktreeTree(worktreePath);
+          execCwd =
+            workspaceRel && workspaceRel !== "."
+              ? join(worktreePath, workspaceRel)
+              : worktreePath;
+        } else {
+          const wt = createDetachedWorktree(repoRoot, dirs.runId, baselineSha);
+          worktreePath = wt.path;
+          cleanupWorktree = { repoRoot, path: worktreePath };
+          if (gitIsDirty(workspace)) {
+            materializeDirtyState(workspace, worktreePath);
+          }
+          initialTreeSha = snapshotWorktreeTree(worktreePath);
+          execCwd =
+            workspaceRel && workspaceRel !== "."
+              ? join(worktreePath, workspaceRel)
+              : worktreePath;
+          if (persistImpl && sessionHandle.kind !== "memory") {
+            setSessionWorktreePath(sessionHandle.sessionDir, worktreePath);
+            retainWorktree = true;
+          }
         }
-        initialTreeSha = snapshotWorktreeTree(worktreePath);
-        execCwd =
-          workspaceRel && workspaceRel !== "."
-            ? join(worktreePath, workspaceRel)
-            : worktreePath;
       } catch (err) {
-        if (worktreePath && repoRoot) {
+        if (err instanceof DelegateError && err.code.startsWith("session_")) {
+          throw err;
+        }
+        if (worktreePath && repoRoot && !persistImpl) {
           try {
             removeWorktree(repoRoot, worktreePath);
           } catch {
@@ -301,8 +393,14 @@ export async function runDelegation(
           !req.model &&
           (req.inScope?.length ?? 0) >= 5);
 
-      // Fresh worktree on retry
-      if (attempt > 0 && req.profile === "implement" && workspace && repoRoot) {
+      // Fresh worktree on retry — persisted implement sessions keep the same tree
+      if (
+        attempt > 0 &&
+        req.profile === "implement" &&
+        workspace &&
+        repoRoot &&
+        !persistImpl
+      ) {
         if (worktreePath) removeWorktree(repoRoot, worktreePath);
         const wt = createDetachedWorktree(repoRoot, `${dirs.runId}-r${attempt}`, baselineSha);
         worktreePath = wt.path;
@@ -355,6 +453,7 @@ export async function runDelegation(
         manualPrompt: req.manualPrompt,
         promptMode: req.promptMode,
         maxBytes: req.config.limits.maxPromptBytes,
+        resume: sessionHandle.kind === "resume",
       });
 
       const promptPath = maybeSavePrompt(req.config, dirs, prompt);
@@ -363,7 +462,11 @@ export async function runDelegation(
       const timeoutSec =
         req.timeoutSeconds ?? defaultTimeout(req.config, req.profile);
 
-      req.onProgress?.({ phase: "init" });
+      const onProgress: ProgressCallback = (progress) => {
+        (req.sessionLock ?? ownSessionLock)?.heartbeat();
+        req.onProgress?.(progress);
+      };
+      onProgress({ phase: "init" });
 
       const outcome = await piExecutor.execute(
         {
@@ -385,6 +488,7 @@ export async function runDelegation(
           policy: {
             profile: req.profile,
             workspace: execCwd,
+            destinationWorkspace: destinationWorkspace ?? workspace,
             inScope: req.inScope,
             outOfScope: req.outOfScope,
             artifactRoots: [dirs.root, dirs.input, dirs.result],
@@ -394,7 +498,8 @@ export async function runDelegation(
           timeoutMs: timeoutSec * 1000,
           config: req.config,
           structuredCompletion: imagePlanned || modalities.includes("vision"),
-          onProgress: req.onProgress,
+          onProgress,
+          sessionHandle,
         },
         req.signal ?? new AbortController().signal,
       );
@@ -525,6 +630,7 @@ export async function runDelegation(
           artifacts: arts,
           attempts,
           durationMs: Date.now() - started,
+          sessionId,
           code:
             err instanceof DelegateError ? err.code : "incomplete_patch",
           message: err instanceof Error ? err.message : String(err),
@@ -537,9 +643,11 @@ export async function runDelegation(
         const retainedWorktree = worktreePath;
         try {
           applyPatchToWorkspace(workspace, patchPath);
-          if (repoRoot && worktreePath) removeWorktree(repoRoot, worktreePath);
-          worktreePath = undefined;
-          cleanupWorktree = undefined;
+          if (repoRoot && worktreePath && !persistImpl) {
+            removeWorktree(repoRoot, worktreePath);
+            worktreePath = undefined;
+            cleanupWorktree = undefined;
+          }
         } catch (err) {
           retainWorktree = true;
           const resultPath = join(dirs.result, "result.json");
@@ -567,6 +675,7 @@ export async function runDelegation(
             artifacts: arts,
             attempts,
             durationMs: Date.now() - started,
+            sessionId,
             code: "apply_failed",
             message: err instanceof Error ? err.message : String(err),
           };
@@ -621,6 +730,7 @@ export async function runDelegation(
       artifacts: [...artifacts],
       attempts,
       durationMs: Date.now() - started,
+      sessionId,
     };
     saveResultJson(dirs, result);
     return result;
@@ -641,6 +751,7 @@ export async function runDelegation(
         artifacts: [...artifacts],
         attempts,
         durationMs: Date.now() - started,
+        sessionId,
         code: err.code,
         message: err.message,
       };
@@ -657,5 +768,6 @@ export async function runDelegation(
       }
     }
     for (const lock of locks) lock.release();
+    ownSessionLock?.release();
   }
 }

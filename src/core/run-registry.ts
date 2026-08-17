@@ -15,6 +15,8 @@ import { POLL_HINT, pollAfterSeconds, startedRunPublic } from "./poll.js";
 import type { RunProgress } from "./progress.js";
 import { resolveProvider } from "./provider.js";
 import { runSmokeTest } from "../pi-sdk/smoke.js";
+import { prepareRunSession } from "./session-prepare.js";
+import type { SessionLock } from "../pi-sdk/session-store.js";
 
 export type { RunProgress, RunProgressPhase } from "./progress.js";
 
@@ -30,6 +32,7 @@ export interface RunRecord {
   runId: string;
   batchId?: string;
   roleId?: string;
+  sessionId?: string;
   status: RunStatus;
   createdAt: number;
   updatedAt: number;
@@ -37,12 +40,14 @@ export interface RunRecord {
   result?: DelegateResult;
   error?: { code: string; message: string };
   abort: AbortController;
+  sessionLock?: SessionLock;
 }
 
 interface PersistedStatus {
   runId: string;
   batchId?: string;
   roleId?: string;
+  sessionId?: string;
   status: RunStatus;
   createdAt: number;
   updatedAt: number;
@@ -65,6 +70,7 @@ function persist(record: RunRecord): void {
     runId: record.runId,
     batchId: record.batchId,
     roleId: record.roleId,
+    sessionId: record.sessionId,
     status: record.status,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
@@ -95,6 +101,7 @@ export function updateRunProgress(
   mem.progress = progress;
   mem.updatedAt = now;
   lastHeartbeatMs.set(runId, now);
+  mem.sessionLock?.heartbeat();
   persist(mem);
 }
 
@@ -127,19 +134,45 @@ export function startRun(opts: {
   batchId?: string;
   roleId?: string;
   runId?: string;
-}): { runId: string; status: "running" } {
-  const dirs = createRunDirs(opts.runId ?? randomUUID());
+}): { runId: string; status: "running"; sessionId?: string } {
+  const runId = assertSafeRunId(opts.runId ?? randomUUID());
+  const prepared =
+    opts.request.sessionHandle !== undefined
+      ? {
+          handle: opts.request.sessionHandle,
+          meta: opts.request.sessionMeta,
+          lock: opts.request.sessionLock,
+          destinationWorkspace: opts.request.destinationWorkspace,
+        }
+      : prepareRunSession({
+          config: opts.config,
+          profile: opts.request.profile,
+          workspace: opts.request.workspace,
+          destinationWorkspace: opts.request.destinationWorkspace,
+          mcpRoots: opts.request.mcpRoots,
+          sessionId: opts.request.sessionId,
+          effort: opts.request.effort,
+          model: opts.request.model,
+          runId,
+          imageInputPlanned: opts.request.imageInputPlanned,
+          useImplementAlternate: opts.request.useImplementAlternate,
+        });
+  const dirs = createRunDirs(runId);
+  const sessionId =
+    prepared.handle.kind === "memory" ? undefined : prepared.handle.sessionId;
   const abort = new AbortController();
   const now = Date.now();
   const record: RunRecord = {
     runId: dirs.runId,
     batchId: opts.batchId,
     roleId: opts.roleId,
+    sessionId,
     status: "running",
     createdAt: now,
     updatedAt: now,
     progress: { phase: "init" },
     abort,
+    sessionLock: prepared.lock,
   };
   runs.set(dirs.runId, record);
   lastHeartbeatMs.set(dirs.runId, now);
@@ -152,9 +185,17 @@ export function startRun(opts: {
         config: opts.config,
         signal: abort.signal,
         runId: dirs.runId,
-        onProgress: (progress) => updateRunProgress(dirs.runId, progress),
+        sessionHandle: prepared.handle,
+        sessionMeta: prepared.meta,
+        sessionLock: prepared.lock,
+        destinationWorkspace: prepared.destinationWorkspace,
+        onProgress: (progress) => {
+          prepared.lock?.heartbeat();
+          updateRunProgress(dirs.runId, progress);
+        },
       });
       record.result = result;
+      if (result.sessionId) record.sessionId = result.sessionId;
       record.status =
         result.status === "success"
           ? "success"
@@ -184,10 +225,20 @@ export function startRun(opts: {
       persist(record);
     } finally {
       lastHeartbeatMs.delete(dirs.runId);
+      try {
+        prepared.lock?.release();
+      } catch {
+        // ignore
+      }
+      record.sessionLock = undefined;
     }
   })();
 
-  return { runId: dirs.runId, status: "running" };
+  return {
+    runId: dirs.runId,
+    status: "running",
+    ...(sessionId ? { sessionId } : {}),
+  };
 }
 
 export function startSmoke(opts: {
@@ -377,6 +428,7 @@ export function runToPublic(
     poll: "get_run",
     pollAfterSeconds: pollAfterSeconds(record.status, elapsedMs),
   };
+  if (record.sessionId) base.sessionId = record.sessionId;
   if (!terminal) {
     base.hint = POLL_HINT;
   }

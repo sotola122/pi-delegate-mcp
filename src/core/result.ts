@@ -38,6 +38,7 @@ export interface DelegateResult {
   artifacts: Array<{ kind: string; path: string }>;
   attempts: AttemptRecord[];
   durationMs: number;
+  sessionId?: string;
   code?: string;
   message?: string;
 }

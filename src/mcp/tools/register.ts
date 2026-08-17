@@ -39,6 +39,8 @@ export interface ToolContext {
 
 const POLL_CONTRACT =
   "Async: returns runId + pollAfterSeconds. Wait that many seconds, then call get_run with view=status until status is terminal; finally get_run with view=full for the result. Do not busy-poll.";
+const SESSION_HINT =
+  "Same-role follow-ups should pass the returned sessionId to reuse the Pi conversation cache.";
 
 function hasWritable(roles: Array<{ profile: ProfileName }>): boolean {
   return roles.some((r) => r.profile === "verify" || r.profile === "implement");
@@ -49,7 +51,7 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
     "delegate_review",
     {
       title: "Delegate Review",
-      description: `Start a read-only review (async). ${POLL_CONTRACT} Perspectives return batchId; poll with get_batch.`,
+      description: `Start a read-only review (async). ${POLL_CONTRACT} ${SESSION_HINT} Perspectives return batchId; poll with get_batch.`,
       inputSchema: reviewInputSchema,
       annotations: annotations.review,
     },
@@ -73,6 +75,7 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
             attachments: args.attachments,
             childSkills: args.childSkills,
             timeoutSeconds: args.timeoutSeconds,
+            sessionId: p.sessionId,
           }));
           const batch = startBatch({
             config: ctx.config,
@@ -103,9 +106,10 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
             attachments: args.attachments,
             childSkills: args.childSkills,
             timeoutSeconds: args.timeoutSeconds,
+            sessionId: args.sessionId,
           },
         });
-        return jsonToMcpContent(startedRunPublic(started.runId));
+        return jsonToMcpContent(startedRunPublic(started.runId, started.sessionId));
       } catch (err) {
         return errorToMcpContent(err);
       }
@@ -116,7 +120,7 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
     "delegate_verify",
     {
       title: "Delegate Verify",
-      description: `Start verification (async). ${POLL_CONTRACT}`,
+      description: `Start verification (async). ${POLL_CONTRACT} ${SESSION_HINT}`,
       inputSchema: verifyInputSchema,
       annotations: annotations.verify,
     },
@@ -139,9 +143,10 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
             childSkills: args.childSkills,
             workspaceMode: args.workspaceMode,
             timeoutSeconds: args.timeoutSeconds,
+            sessionId: args.sessionId,
           },
         });
-        return jsonToMcpContent(startedRunPublic(started.runId));
+        return jsonToMcpContent(startedRunPublic(started.runId, started.sessionId));
       } catch (err) {
         return errorToMcpContent(err);
       }
@@ -152,7 +157,7 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
     "delegate_implement",
     {
       title: "Delegate Implement",
-      description: `Start implement in a worktree (async). Default delivery is patch. ${POLL_CONTRACT}`,
+      description: `Start implement in a worktree (async). Default delivery is patch. ${POLL_CONTRACT} ${SESSION_HINT}`,
       inputSchema: implementInputSchema,
       annotations: annotations.implement,
     },
@@ -174,9 +179,10 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
             childSkills: args.childSkills,
             delivery: args.delivery,
             timeoutSeconds: args.timeoutSeconds,
+            sessionId: args.sessionId,
           },
         });
-        return jsonToMcpContent(startedRunPublic(started.runId));
+        return jsonToMcpContent(startedRunPublic(started.runId, started.sessionId));
       } catch (err) {
         return errorToMcpContent(err);
       }
@@ -187,7 +193,7 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
     "delegate_judge",
     {
       title: "Delegate Judge",
-      description: `Start a no-tools judgment (async). ${POLL_CONTRACT}`,
+      description: `Start a no-tools judgment (async). ${POLL_CONTRACT} ${SESSION_HINT}`,
       inputSchema: judgeInputSchema,
       annotations: annotations.judge,
     },
@@ -207,9 +213,10 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
             effort: args.effort,
             model: args.model,
             timeoutSeconds: args.timeoutSeconds,
+            sessionId: args.sessionId,
           },
         });
-        return jsonToMcpContent(startedRunPublic(started.runId));
+        return jsonToMcpContent(startedRunPublic(started.runId, started.sessionId));
       } catch (err) {
         return errorToMcpContent(err);
       }
@@ -220,7 +227,7 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
     "delegate_manual",
     {
       title: "Delegate Manual",
-      description: `Start a manual-prompt delegation under a fixed profile (async). ${POLL_CONTRACT}`,
+      description: `Start a manual-prompt delegation under a fixed profile (async). ${POLL_CONTRACT} ${SESSION_HINT}`,
       inputSchema: manualInputSchema,
       annotations: annotations.manual,
     },
@@ -244,9 +251,10 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
             manualPrompt: args.prompt,
             promptMode: args.promptMode ?? "append",
             timeoutSeconds: args.timeoutSeconds,
+            sessionId: args.sessionId,
           },
         });
-        return jsonToMcpContent(startedRunPublic(started.runId));
+        return jsonToMcpContent(startedRunPublic(started.runId, started.sessionId));
       } catch (err) {
         return errorToMcpContent(err);
       }
@@ -310,8 +318,9 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
           workspaceMode: r.workspaceMode,
           effort: r.effort,
           model: r.model,
-          timeoutSeconds: r.timeoutSeconds,
-        }));
+            timeoutSeconds: r.timeoutSeconds,
+            sessionId: r.sessionId,
+          }));
         const batch = startBatch({
           config: ctx.config,
           workspace: args.workspace,

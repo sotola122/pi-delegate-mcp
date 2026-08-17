@@ -47,6 +47,9 @@ describe("fake pi executor", () => {
     expect(result.status).toBe("success");
     expect(result.output).toContain("# Review Result");
     expect(result.attempts[0]?.backend).toBe("fake");
+    expect(result.sessionId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
 
     rmSync(root, { recursive: true, force: true });
   });

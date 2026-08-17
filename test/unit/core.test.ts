@@ -189,6 +189,23 @@ describe("prompt assembly", () => {
     expect(prompt).toContain("Custom criteria only.");
   });
 
+  it("resume keeps lenses, modalities, and manual while omitting safety and profile bodies", () => {
+    const prompt = assemblePrompt({
+      profile: "review",
+      resume: true,
+      lenses: ["adversarial"],
+      modalities: ["vision"],
+      manualPrompt: "Follow-up: check the race.",
+      task: { objective: "follow up", profile: "review" },
+    });
+    expect(prompt).not.toMatch(/Do not run `git commit`/);
+    expect(prompt).not.toMatch(/independent second opinion/);
+    expect(prompt).toMatch(/Adversarial lens/);
+    expect(prompt).toMatch(/Follow-up: check the race/);
+    expect(prompt).toMatch(/# Review Result/);
+    expect(prompt).toMatch(/objective:/);
+  });
+
   it("task block serializes without injection via yaml", () => {
     const block = serializeTaskBlock({
       objective: "line1\nfoo: bar",
@@ -247,6 +264,7 @@ describe("config", () => {
   it("defaults to version 2", () => {
     expect(defaultConfig().version).toBe(2);
     expect(defaultConfig().sdk.writableToolExecution).toBe("sequential");
+    expect(defaultConfig().sessions.enabled).toBe(true);
   });
 
   it("defaults delegated run timeout to 3 hours per profile", () => {

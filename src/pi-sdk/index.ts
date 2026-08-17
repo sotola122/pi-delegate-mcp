@@ -29,3 +29,11 @@ export {
   setPiExecutorForTests,
 } from "./factory.js";
 export { ModelRuntimeManager, getSharedRuntimeManager, resetSharedRuntimeManagerForTests } from "./runtime-manager.js";
+export {
+  MEMORY_SESSION,
+  sessionsEnabled,
+  sessionsRoot,
+  type SessionHandle,
+  type SessionLock,
+  type SessionMeta,
+} from "./session-store.js";

@@ -55,6 +55,7 @@ Run options:
   --in-scope <path> (repeatable)
   --acceptance-check <text> (repeatable)
   --timeout-seconds <n>
+  --session-id <uuid> (resume a same-role Pi session)
 `;
 }
 

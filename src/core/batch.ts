@@ -36,6 +36,7 @@ export interface BatchTaskSpec {
   timeoutSeconds?: number;
   manualPrompt?: string;
   promptMode?: "append" | "replace";
+  sessionId?: string;
 }
 
 export interface BatchSpec {
@@ -50,6 +51,7 @@ export interface BatchSpec {
 export interface BatchChild {
   roleId: string;
   runId: string;
+  sessionId?: string;
 }
 
 export interface BatchRecord {
@@ -196,9 +198,15 @@ function launchTask(
       timeoutSeconds: task.timeoutSeconds,
       manualPrompt: task.manualPrompt,
       promptMode: task.promptMode,
+      sessionId: task.sessionId,
+      destinationWorkspace: spec.workspace,
     },
   });
-  return { roleId: task.roleId, runId: started.runId };
+  return {
+    roleId: task.roleId,
+    runId: started.runId,
+    ...(started.sessionId ? { sessionId: started.sessionId } : {}),
+  };
 }
 
 async function waitRunTerminal(runId: string): Promise<RunRecord> {
@@ -461,6 +469,7 @@ export function batchToPublic(batch: BatchRecord): Record<string, unknown> {
     return {
       roleId: c.roleId,
       runId: c.runId,
+      ...(c.sessionId ? { sessionId: c.sessionId } : {}),
       status: r?.status ?? "unknown",
       result: r?.result,
       error: r?.error,

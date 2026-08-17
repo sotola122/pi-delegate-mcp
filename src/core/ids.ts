@@ -18,3 +18,14 @@ export function assertSafeRunId(id: string, label = "runId"): string {
   }
   return id;
 }
+
+export function assertSafeSessionId(id: string): string {
+  if (!isSafeRunId(id)) {
+    throw new DelegateError(
+      `Invalid sessionId: must be a UUID (got ${JSON.stringify(id)})`,
+      "invalid_session_id",
+      true,
+    );
+  }
+  return id;
+}

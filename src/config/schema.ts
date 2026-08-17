@@ -136,6 +136,11 @@ const ConfigSchemaV2 = z.object({
       storeAssembledPrompt: z.boolean().default(false),
     })
     .default({}),
+  sessions: z
+    .object({
+      enabled: z.boolean().default(true),
+    })
+    .default({}),
   multimodal: z
     .object({
       imageEnabled: z.boolean().default(true),

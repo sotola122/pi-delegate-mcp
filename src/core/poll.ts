@@ -13,12 +13,16 @@ export function pollAfterSeconds(
   return 60;
 }
 
-export function startedRunPublic(runId: string): Record<string, unknown> {
+export function startedRunPublic(
+  runId: string,
+  sessionId?: string,
+): Record<string, unknown> {
   return {
     runId,
     status: "running" as const,
     poll: "get_run",
     pollAfterSeconds: 15,
     hint: POLL_HINT,
+    ...(sessionId ? { sessionId } : {}),
   };
 }

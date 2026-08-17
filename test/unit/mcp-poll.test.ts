@@ -37,6 +37,15 @@ describe("startedRunPublic", () => {
     expect(p.pollAfterSeconds).toBe(15);
     expect(p.hint).toBe(POLL_HINT);
     expect(p.poll).toBe("get_run");
+    expect(p.sessionId).toBeUndefined();
+  });
+
+  it("includes sessionId when provided", () => {
+    const p = startedRunPublic(
+      "00000000-0000-4000-8000-000000000001",
+      "11111111-1111-4111-8111-111111111111",
+    );
+    expect(p.sessionId).toBe("11111111-1111-4111-8111-111111111111");
   });
 });
 

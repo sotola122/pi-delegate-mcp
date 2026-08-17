@@ -8,6 +8,10 @@ export const commonFields = {
   timeoutSeconds: z.number().int().positive().optional(),
 };
 
+const sessionIdField = {
+  sessionId: z.string().uuid().optional(),
+};
+
 const perspectiveSchema = z.object({
   roleId: z.string(),
   objective: z.string().optional(),
@@ -15,6 +19,7 @@ const perspectiveSchema = z.object({
   focus: z.array(z.string()).optional(),
   effort: EffortSchema.optional(),
   model: ModelSchema.optional(),
+  ...sessionIdField,
 });
 
 export const reviewInputSchema = {
@@ -31,6 +36,7 @@ export const reviewInputSchema = {
   childSkills: z.array(z.string()).optional(),
   perspectives: z.array(perspectiveSchema).max(HARD_MAX_TASKS).optional(),
   ...commonFields,
+  ...sessionIdField,
 };
 
 export const verifyInputSchema = {
@@ -44,6 +50,7 @@ export const verifyInputSchema = {
   childSkills: z.array(z.string()).optional(),
   workspaceMode: z.enum(["auto", "in-place", "worktree"]).optional(),
   ...commonFields,
+  ...sessionIdField,
 };
 
 export const implementInputSchema = {
@@ -56,6 +63,7 @@ export const implementInputSchema = {
   childSkills: z.array(z.string()).optional(),
   delivery: z.enum(["patch", "apply"]).optional(),
   ...commonFields,
+  ...sessionIdField,
 };
 
 export const judgeInputSchema = {
@@ -65,6 +73,7 @@ export const judgeInputSchema = {
   acceptanceChecks: z.array(z.string()).optional(),
   lenses: z.array(z.enum(["adversarial", "tooling-suggest"])).optional(),
   ...commonFields,
+  ...sessionIdField,
 };
 
 export const manualInputSchema = {
@@ -80,6 +89,7 @@ export const manualInputSchema = {
   childSkills: z.array(z.string()).optional(),
   delivery: z.enum(["patch", "apply"]).optional(),
   ...commonFields,
+  ...sessionIdField,
 };
 
 export const smokeInputSchema = {
@@ -127,6 +137,7 @@ const batchTaskSchema = z.object({
   timeoutSeconds: z.number().int().positive().optional(),
   manualPrompt: z.string().optional(),
   promptMode: z.enum(["append", "replace"]).optional(),
+  ...sessionIdField,
 });
 
 /** Profile-specific required fields shared by batch / roles tasks. */
@@ -194,6 +205,7 @@ const roleSchema = z.object({
   effort: EffortSchema.optional(),
   model: ModelSchema.optional(),
   timeoutSeconds: z.number().int().positive().optional(),
+  ...sessionIdField,
 });
 
 export const rolesInputSchema = {
