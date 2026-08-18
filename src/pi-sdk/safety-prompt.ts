@@ -20,7 +20,7 @@ export function immutableDelegationSafetyPrompt(
     safety,
     "",
     "## Delegation Policy (immutable)",
-    `- Profile: ${policy.profile}`,
+    `- Tools: ${(policy.tools ?? []).join(",") || "(none)"}`,
     (policy.destinationWorkspace ?? policy.workspace)
       ? `- Workspace: ${policy.destinationWorkspace ?? policy.workspace}`
       : "",

@@ -41,21 +41,20 @@ Usage:
   pi-delegate-mcp assets status
   pi-delegate-mcp cleanup
   pi-delegate-mcp smoke [--mode planned-tuple|provider-auth] [options]
-  pi-delegate-mcp run --profile <name> --objective <text> [options]
+  pi-delegate-mcp run --message <text> [options]
   pi-delegate-mcp --version
   pi-delegate-mcp --help
 
 Run options:
   --workspace <path>
-  --manual-file <path> | --manual <path>
-  --prompt-mode append|replace
+  --agent-type <name>
+  --prompt <text> | --prompt-file <path>
+  --skill <path-or-name> (repeatable)
   --effort med|high|xhigh|max
   --model gpt-5.6-sol|gpt-5.6-luna
-  --delivery patch|apply
-  --in-scope <path> (repeatable)
-  --acceptance-check <text> (repeatable)
+  --provider <id>
   --timeout-seconds <n>
-  --session-id <uuid> (resume a same-role Pi session)
+  --session-id <uuid>
 `;
 }
 

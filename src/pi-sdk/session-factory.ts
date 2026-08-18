@@ -8,6 +8,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { PiAttemptPlan, ThinkingLevel } from "./types.js";
 import { createDelegationResourceLoader } from "./resource-loader.js";
+import { toolsAreWritable } from "../agents/types.js";
 
 type AnyModel = NonNullable<ReturnType<ModelRuntime["getModel"]>>;
 
@@ -63,7 +64,7 @@ export async function createDelegationSession(opts: {
 
   if (
     plan.config.sdk?.writableToolExecution !== "parallel" &&
-    (plan.profile === "verify" || plan.profile === "implement")
+    toolsAreWritable(plan.tools)
   ) {
     session.agent.toolExecution = "sequential";
   }

@@ -72,10 +72,19 @@ export function fetchLatestVersion(npm: NpmRunner = defaultNpm): string {
  */
 export function updateCommand(
   argv: string[],
-  deps: { npm?: NpmRunner; installedVersion?: () => string } = {},
+  deps: {
+    npm?: NpmRunner;
+    installedVersion?: () => string;
+    setExitCode?: (code: number) => void;
+  } = {},
 ): void {
   const npm = deps.npm ?? defaultNpm;
   const installedVersion = deps.installedVersion ?? readInstalledVersion;
+  const setExitCode =
+    deps.setExitCode ??
+    ((code: number) => {
+      process.exitCode = code;
+    });
   const { check, versionSpec } = parseUpdateArgs(argv);
   const current = installedVersion();
 
@@ -88,7 +97,7 @@ export function updateCommand(
       return;
     }
     console.log("update available");
-    process.exitCode = 1;
+    setExitCode(1);
     return;
   }
 
@@ -102,13 +111,13 @@ export function updateCommand(
   if (r.error) {
     console.error(r.error.message);
     console.error(npmHint());
-    process.exitCode = 1;
+    setExitCode(1);
     return;
   }
   if (r.status !== 0) {
     console.error(`npm install failed (exit ${r.status ?? "unknown"})`);
     console.error(npmHint());
-    process.exitCode = 1;
+    setExitCode(1);
     return;
   }
 

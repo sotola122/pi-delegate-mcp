@@ -19,9 +19,7 @@ export async function createDelegationResourceLoader(opts: {
   const { plan, settingsManager } = opts;
   const agentDir = opts.agentDir ?? getAgentDir();
   const cwd = plan.cwd ?? process.cwd();
-  const needsBash =
-    !plan.noTools &&
-    (plan.tools.includes("bash") || plan.profile === "verify" || plan.profile === "implement");
+  const needsBash = !plan.noTools && plan.tools.includes("bash");
 
   const extensionFactories = [
     createDelegationPolicyExtension(plan.policy),

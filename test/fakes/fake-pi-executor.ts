@@ -24,7 +24,7 @@ export class FakePiExecutor implements PiExecutor {
     this.handler =
       handler ??
       (async (plan) => ({
-        finalText: `# ${heading(plan.profile)}\n\nOK\n`,
+        finalText: "OK\n",
         completion: "completed",
       }));
     this.smokeHandler = smokeHandler;
@@ -124,20 +124,5 @@ export class FakePiExecutor implements PiExecutor {
       thinking: plan.thinking,
       backend: "fake",
     };
-  }
-}
-
-function heading(profile: string): string {
-  switch (profile) {
-    case "review":
-      return "Review Result";
-    case "verify":
-      return "Verify Result";
-    case "implement":
-      return "Implement Result";
-    case "no-tools":
-      return "Judgment Result";
-    default:
-      return "Result";
   }
 }

@@ -28,9 +28,7 @@ describe("sdk completion status", () => {
       finalizeStatusFromOutcome({
         completion: "completed",
         output: "# Review Result\nok",
-        profile: "review",
         acceptance: [],
-        requireHeading: true,
         agentStarted: true,
         agentEnded: false,
       }),
@@ -42,9 +40,7 @@ describe("sdk completion status", () => {
       finalizeStatusFromOutcome({
         completion: "provider_error",
         output: "",
-        profile: "review",
         acceptance: [],
-        requireHeading: true,
         agentStarted: true,
         agentEnded: false,
       }),
@@ -56,9 +52,7 @@ describe("sdk completion status", () => {
       finalizeStatusFromOutcome({
         completion: "completed",
         output: "# Review Result\nok",
-        profile: "review",
         acceptance: [],
-        requireHeading: true,
         agentStarted: true,
         agentEnded: true,
       }),
@@ -188,7 +182,7 @@ describe("advancePipelineWorkspace", () => {
       result: {
         runId: randomUUID(),
         status: "success",
-        profile: "implement",
+        agentType: "implement",
         provider: "p",
         model: "m",
         thinking: "medium",

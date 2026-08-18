@@ -147,7 +147,7 @@ describe("A3 attachments", () => {
           resolveRealPath(plan),
         );
         const decision = evaluateToolCall(
-          { profile: "implement", workspace: ws },
+          { tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], workspace: ws },
           { name: "write", input: { path: plan, content: "x" } },
         );
         expect(decision.kind).toBe("deny");
@@ -198,7 +198,7 @@ describe("A4 childSkills", () => {
     const validated = validateChildSkills([skillPkg], defaultConfig());
     const allow = evaluateToolCall(
       {
-        profile: "review",
+        tools: ["read", "grep", "find", "ls"],
         workspace: join(dir, "worktree"),
         skillRoots: validated,
       },
@@ -208,7 +208,7 @@ describe("A4 childSkills", () => {
 
     const denySibling = evaluateToolCall(
       {
-        profile: "review",
+        tools: ["read", "grep", "find", "ls"],
         workspace: join(dir, "worktree"),
         skillRoots: validated,
       },

@@ -1,13 +1,12 @@
-import type { AppConfig, Effort, AllowedModel, ProfileName } from "../config/schema.js";
+import type { AppConfig, Effort, AllowedModel } from "../config/schema.js";
 import { DelegateError } from "./errors.js";
-import { resolveProvider, loadProviderFile } from "./provider.js";
 import {
   parseAcceptanceEvidence,
+  finalizeStatusFromOutcome,
   type DelegateResult,
+  type AttemptRecord,
 } from "./result.js";
-import { assemblePrompt, type Lens, type Modality } from "../prompt/assembler.js";
-import { assertManualAllowed } from "../prompt/manual.js";
-import { validateManualPrompt } from "../prompt/validator.js";
+import { assembleChildPrompt } from "../prompt/child.js";
 import {
   detectModalitiesFromAttachments,
   mergeModalities,
@@ -17,21 +16,8 @@ import {
   resolveWorkspace,
   validateAttachmentPaths,
   assertGitRootAllowed,
-  isPathInside,
-  resolveRealPath,
 } from "../workspace/roots.js";
-import { validateChildSkills } from "../workspace/child-skills.js";
-import { gitRoot, gitIsDirty, gitHead } from "../workspace/git.js";
-import { buildChangeManifest } from "../workspace/manifest.js";
-import {
-  createDetachedWorktree,
-  materializeDirtyState,
-  removeWorktree,
-  captureTreeFingerprint,
-  fingerprintsDiffer,
-} from "../workspace/worktree.js";
-import { diffWorktreeToPatch, applyPatchToWorkspace, snapshotWorktreeTree } from "../workspace/patch.js";
-import { canApplyDelivery } from "../workspace/scope.js";
+import { gitRoot } from "../workspace/git.js";
 import { acquireLock, type LockHandle } from "../workspace/lock.js";
 import {
   createRunDirs,
@@ -40,62 +26,49 @@ import {
   maybeSavePrompt,
 } from "../artifacts/manager.js";
 import { redactSecrets } from "../artifacts/redact.js";
-import { join, relative } from "node:path";
-import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { getPiExecutor } from "../pi-sdk/factory.js";
-import { mapProfileToSdkTools } from "../pi-sdk/profile-mapper.js";
 import type { PiExecutor, ThinkingLevel } from "../pi-sdk/types.js";
-import {
-  finalizeStatusFromOutcome,
-  type AttemptRecord,
-} from "./result.js";
 import type { ProgressCallback } from "./progress.js";
 import { prepareRunSession } from "./session-prepare.js";
-import {
-  setSessionWorktreePath,
-  type SessionHandle,
-  type SessionLock,
-  type SessionMeta,
-} from "../pi-sdk/session-store.js";
+import type { SessionHandle, SessionLock, SessionMeta } from "../pi-sdk/session-store.js";
+import { loadProviderFile } from "./provider.js";
+import type { Modality } from "../prompt/assembler.js";
+import { validateChildSkills } from "../workspace/child-skills.js";
+import { parsePiTools } from "../agents/resolve.js";
+import { toolsAreWritable } from "../agents/types.js";
 
 export interface DelegateRequest {
-  profile: ProfileName;
-  objective: string;
+  taskName: string;
+  message: string;
+  prompt?: string;
+  developerInstructions?: string;
+  agentsMd?: string;
+  tools: string[];
+  noTools: boolean;
+  provider: string;
+  model: string;
+  thinking: ThinkingLevel;
+  effort?: Effort;
   workspace?: string;
   mcpRoots?: string[];
-  reviewKind?: "change-review" | "static-hunt";
-  baseline?: string;
-  inScope?: string[];
-  outOfScope?: string[];
-  acceptanceChecks?: string[];
-  suggestedChecks?: string[];
-  lenses?: Lens[];
-  focus?: string[];
-  effort?: Effort;
-  model?: AllowedModel;
   attachments?: string[];
   childSkills?: string[];
-  workspaceMode?: "auto" | "in-place" | "worktree";
-  delivery?: "patch" | "apply";
   timeoutSeconds?: number;
-  manualPrompt?: string;
-  promptMode?: "append" | "replace";
   modalities?: Modality[];
   imageInputPlanned?: boolean;
-  useImplementAlternate?: boolean;
   signal?: AbortSignal;
   config: AppConfig;
-  /** Reuse a pre-allocated run directory / id (async MCP). */
   runId?: string;
-  /** Test / advanced injection of Pi executor. */
   executor?: PiExecutor;
-  /** Heartbeat for async MCP get_run status view. */
   onProgress?: ProgressCallback;
   sessionId?: string;
   destinationWorkspace?: string;
   sessionHandle?: SessionHandle;
   sessionMeta?: SessionMeta;
   sessionLock?: SessionLock;
+  agentType?: string;
+  allowedModel?: AllowedModel;
 }
 
 function publicSessionId(handle?: SessionHandle): string | undefined {
@@ -103,12 +76,8 @@ function publicSessionId(handle?: SessionHandle): string | undefined {
   return handle.sessionId;
 }
 
-function persistImplementWorktree(handle?: SessionHandle): boolean {
-  return Boolean(handle && handle.kind !== "memory");
-}
-
-function defaultTimeout(config: AppConfig, profile: ProfileName): number {
-  return config.limits.timeoutSeconds[profile];
+function defaultTimeout(config: AppConfig): number {
+  return config.limits.timeoutSeconds;
 }
 
 export async function runDelegation(
@@ -119,8 +88,6 @@ export async function runDelegation(
   const artifacts: DelegateResult["artifacts"] = [];
   const attempts: DelegateResult["attempts"] = [];
   let locks: LockHandle[] = [];
-  let cleanupWorktree: { repoRoot: string; path: string } | undefined;
-  let retainWorktree = false;
   let ownSessionLock: SessionLock | undefined;
   const prepared =
     req.sessionHandle !== undefined
@@ -132,45 +99,26 @@ export async function runDelegation(
         }
       : prepareRunSession({
           config: req.config,
-          profile: req.profile,
+          taskName: req.taskName,
+          provider: req.provider,
+          model: req.model,
           workspace: req.workspace,
           destinationWorkspace: req.destinationWorkspace,
           mcpRoots: req.mcpRoots,
           sessionId: req.sessionId,
-          effort: req.effort,
-          model: req.model,
           runId: dirs.runId,
-          imageInputPlanned: req.imageInputPlanned,
-          useImplementAlternate: req.useImplementAlternate,
+          agentType: req.agentType,
         });
   if (!req.sessionLock) ownSessionLock = prepared.lock;
   const sessionHandle = prepared.handle;
-  const sessionMeta = prepared.meta;
   const sessionId = publicSessionId(sessionHandle);
   const destinationWorkspace = prepared.destinationWorkspace;
 
   try {
-    // Manual policy
-    if (req.manualPrompt !== undefined) {
-      assertManualAllowed(req.config, req.profile, req.promptMode ?? "append");
-      validateManualPrompt(req.manualPrompt);
-    }
-
-    // Profile enabled?
-    const profileKey = req.profile === "no-tools" ? "no-tools" : req.profile;
-    const profileCfg =
-      profileKey === "no-tools"
-        ? req.config.profiles["no-tools"]
-        : req.config.profiles[profileKey];
-    if (!profileCfg.enabled) {
-      throw new DelegateError(
-        `Profile disabled: ${req.profile}`,
-        "profile_disabled",
-        true,
-      );
-    }
-
-    const needsWorkspace = req.profile !== "no-tools";
+    const tools = parsePiTools(req.tools);
+    const noTools = tools.length === 0;
+    const writable = toolsAreWritable(tools);
+    const needsWorkspace = !noTools;
     let workspace: string | undefined;
     if (needsWorkspace) {
       workspace = resolveWorkspace({
@@ -195,538 +143,146 @@ export async function runDelegation(
       attachments,
       req.config,
     );
-    if (req.modalities?.includes("browser") && !req.config.multimodal.browserEnabled) {
-      throw new DelegateError(
-        "Browser modality is disabled (enable multimodal.browserEnabled)",
-        "browser_disabled",
-        true,
-      );
-    }
     const modalities = mergeModalities(req.modalities, detectedModalities);
     const imagePlanned =
       req.imageInputPlanned || modalities.includes("vision");
-
     if (imagePlanned) {
-      const preview = resolveProvider({
-        config: req.config,
-        profile: req.profile,
-        effort: req.effort,
-        model: req.model,
-        imageInputPlanned: true,
-        useImplementAlternate: req.useImplementAlternate,
-      });
-      assertVisionCapableModel(preview.model);
+      assertVisionCapableModel(req.model);
     }
 
-    // Concurrency locks for writable profiles
-    if (req.profile === "verify" || req.profile === "implement") {
+    if (writable) {
       const wsKey = workspace ?? "none";
       locks.push(await acquireLock(`writable:${wsKey}`));
-      locks.push(await acquireLock(req.profile));
     }
 
-    // Workspace mode
-    let workspaceMode: "in-place" | "worktree" = "in-place";
-    let execCwd = workspace;
-    let worktreePath: string | undefined;
-    let baselineSha: string | undefined;
-    /** Tree id after dirty materialization — agent-delta baseline. */
-    let initialTreeSha: string | undefined;
     const repoRoot = workspace ? gitRoot(workspace) : null;
     if (workspace && repoRoot) {
       assertGitRootAllowed(workspace, repoRoot, req.config);
     }
-    const workspaceRel =
-      workspace && repoRoot ? relative(repoRoot, workspace) : "";
 
-    if (req.profile === "implement") {
-      workspaceMode = "worktree";
-    } else if (req.profile === "verify") {
-      const mode = req.workspaceMode ?? "auto";
-      if (mode === "worktree") workspaceMode = "worktree";
-      else if (mode === "in-place") workspaceMode = "in-place";
-      else {
-        workspaceMode =
-          workspace && repoRoot && gitIsDirty(workspace) ? "worktree" : "in-place";
-      }
-    }
-
-    const persistImpl =
-      req.profile === "implement" && persistImplementWorktree(sessionHandle);
-
-    if (workspaceMode === "worktree") {
-      if (!workspace || !repoRoot) {
-        throw new DelegateError(
-          "Worktree requires a git workspace",
-          "worktree_requires_git",
-          true,
-        );
-      }
-      baselineSha = gitHead(workspace) ?? undefined;
-      try {
-        if (persistImpl && sessionHandle.kind === "resume") {
-          const stored = sessionMeta?.worktreePath;
-          if (!stored || !existsSync(stored)) {
-            throw new DelegateError(
-              "Session worktree is missing; start a new implement session",
-              "session_worktree_missing",
-              true,
-            );
-          }
-          const realWt = resolveRealPath(stored);
-          if (!isPathInside(repoRoot, realWt)) {
-            throw new DelegateError(
-              "Session worktree escapes the git root",
-              "session_path_escape",
-              true,
-            );
-          }
-          worktreePath = realWt;
-          cleanupWorktree = { repoRoot, path: worktreePath };
-          retainWorktree = true;
-          initialTreeSha = snapshotWorktreeTree(worktreePath);
-          execCwd =
-            workspaceRel && workspaceRel !== "."
-              ? join(worktreePath, workspaceRel)
-              : worktreePath;
-        } else {
-          const wt = createDetachedWorktree(repoRoot, dirs.runId, baselineSha);
-          worktreePath = wt.path;
-          cleanupWorktree = { repoRoot, path: worktreePath };
-          if (gitIsDirty(workspace)) {
-            materializeDirtyState(workspace, worktreePath);
-          }
-          initialTreeSha = snapshotWorktreeTree(worktreePath);
-          execCwd =
-            workspaceRel && workspaceRel !== "."
-              ? join(worktreePath, workspaceRel)
-              : worktreePath;
-          if (persistImpl && sessionHandle.kind !== "memory") {
-            setSessionWorktreePath(sessionHandle.sessionDir, worktreePath);
-            retainWorktree = true;
-          }
-        }
-      } catch (err) {
-        if (err instanceof DelegateError && err.code.startsWith("session_")) {
-          throw err;
-        }
-        if (worktreePath && repoRoot && !persistImpl) {
-          try {
-            removeWorktree(repoRoot, worktreePath);
-          } catch {
-            // best-effort cleanup
-          }
-          worktreePath = undefined;
-          cleanupWorktree = undefined;
-        }
-        const allowFallback =
-          req.profile === "verify" &&
-          req.config.workspace.allowInPlaceVerifyFallback;
-        if (!allowFallback) {
-          throw new DelegateError(
-            `Worktree materialization failed: ${err instanceof Error ? err.message : String(err)}`,
-            "worktree_materialize_failed",
-            true,
-          );
-        }
-        workspaceMode = "in-place";
-        execCwd = workspace;
-      }
-    }
-
-    // Change manifest for change-review
-    let manifestAttachments: string[] = [];
-    if (req.profile === "review" && req.reviewKind === "change-review" && workspace) {
-      const manifest = buildChangeManifest(
-        workspace,
-        dirs.input,
-        req.baseline,
-        req.inScope,
-      );
-      artifacts.push({ kind: "manifest", path: manifest.manifestPath });
-      artifacts.push({ kind: "tracked.patch", path: manifest.trackedPatchPath });
-      manifestAttachments = [manifest.manifestPath, manifest.trackedPatchPath];
-      baselineSha = manifest.baselineSha;
-    }
-
-    const delivery =
-      req.profile === "implement" ? (req.delivery ?? "patch") : "none";
-    if (delivery === "apply" && !req.config.profiles.implement.allowApplyToWorkspace) {
-      throw new DelegateError(
-        "delivery=apply is disabled in config",
-        "apply_disabled",
-        true,
-      );
-    }
-
-    const beforeFp =
-      req.profile === "verify" && workspace
-        ? captureTreeFingerprint(workspace)
-        : undefined;
-
-    const providerFile = loadProviderFile();
-    const maxAttempts =
-      req.profile === "implement" ? providerFile.retry.max_attempts : 1;
-
-    let lastOutput = "";
-    let lastResolved = resolveProvider({
-      config: req.config,
-      profile: req.profile,
-      effort: req.effort,
-      model: req.model,
-      imageInputPlanned: imagePlanned,
-      useImplementAlternate: req.useImplementAlternate,
+    const prompt = assembleChildPrompt({
+      agentsMd: req.agentsMd,
+      developerInstructions: [req.developerInstructions, req.prompt]
+        .filter(Boolean)
+        .join("\n\n"),
+      message: req.message,
+      resume: sessionHandle.kind === "resume",
+      maxBytes: req.config.limits.maxPromptBytes,
     });
-    let cancelled = false;
-    let lastCompletion = "completed";
-    let lastAgentStarted = true;
-    let lastAgentEnded = true;
-    const piExecutor =
-      req.executor ?? (await getPiExecutor(req.config));
-    const toolProfile = mapProfileToSdkTools(req.profile);
+    const promptPath = maybeSavePrompt(req.config, dirs, prompt);
+    if (promptPath) artifacts.push({ kind: "prompt", path: promptPath });
 
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const useAlternate =
-        attempt > 0 ||
-        req.useImplementAlternate ||
-        (req.profile === "implement" &&
-          !req.model &&
-          (req.inScope?.length ?? 0) >= 5);
+    const timeoutSec = req.timeoutSeconds ?? defaultTimeout(req.config);
+    const onProgress: ProgressCallback = (progress) => {
+      (req.sessionLock ?? ownSessionLock)?.heartbeat();
+      req.onProgress?.(progress);
+    };
+    onProgress({ phase: "init" });
 
-      // Fresh worktree on retry — persisted implement sessions keep the same tree
-      if (
-        attempt > 0 &&
-        req.profile === "implement" &&
-        workspace &&
-        repoRoot &&
-        !persistImpl
-      ) {
-        if (worktreePath) removeWorktree(repoRoot, worktreePath);
-        const wt = createDetachedWorktree(repoRoot, `${dirs.runId}-r${attempt}`, baselineSha);
-        worktreePath = wt.path;
-        cleanupWorktree = { repoRoot, path: worktreePath };
-        if (gitIsDirty(workspace)) materializeDirtyState(workspace, worktreePath);
-        initialTreeSha = snapshotWorktreeTree(worktreePath);
-        execCwd =
-          workspaceRel && workspaceRel !== "."
-            ? join(worktreePath, workspaceRel)
-            : worktreePath;
-      }
-
-      lastResolved = resolveProvider({
-        config: req.config,
-        profile: req.profile,
-        effort: req.effort,
-        model: req.model,
-        imageInputPlanned: imagePlanned,
-        useImplementAlternate: useAlternate && !req.model,
-      });
-
-      const task = {
-        objective: req.objective,
-        profile: req.profile,
-        review_kind: req.reviewKind,
-        workspace: execCwd,
-        workspace_mode: workspaceMode,
-        baseline: baselineSha,
-        in_scope: req.inScope,
-        out_of_scope: req.outOfScope,
-        acceptance_checks: req.acceptanceChecks ?? req.suggestedChecks,
-        focus: req.focus,
-        allowed_task_side_effects:
-          req.profile === "implement"
-            ? ["edit", "write", "bash"]
-            : req.profile === "verify"
-              ? ["bash"]
-              : [],
-        attachments: [...attachments, ...manifestAttachments],
-        cli_attachments: [...attachments, ...manifestAttachments],
-        delivery: delivery === "none" ? undefined : delivery,
-        modalities,
-      };
-
-      const prompt = assemblePrompt({
-        profile: req.profile,
-        task,
-        lenses: req.lenses,
-        modalities,
-        manualPrompt: req.manualPrompt,
-        promptMode: req.promptMode,
-        maxBytes: req.config.limits.maxPromptBytes,
-        resume: sessionHandle.kind === "resume",
-      });
-
-      const promptPath = maybeSavePrompt(req.config, dirs, prompt);
-      if (promptPath) artifacts.push({ kind: "prompt", path: promptPath });
-
-      const timeoutSec =
-        req.timeoutSeconds ?? defaultTimeout(req.config, req.profile);
-
-      const onProgress: ProgressCallback = (progress) => {
-        (req.sessionLock ?? ownSessionLock)?.heartbeat();
-        req.onProgress?.(progress);
-      };
-      onProgress({ phase: "init" });
-
-      const outcome = await piExecutor.execute(
-        {
-          runId: dirs.runId,
-          attempt,
-          cwd: execCwd,
-          profile: req.profile,
-          provider: lastResolved.provider,
-          model: lastResolved.model,
-          thinking: lastResolved.thinking as ThinkingLevel,
-          tools: toolProfile.tools,
-          excludeTools: toolProfile.excludeTools,
-          noTools: toolProfile.noTools,
-          prompt,
-          attachmentPaths: [...attachments, ...manifestAttachments],
-          textAttachments: [],
-          imageAttachments: [],
-          childSkillPaths: childSkills,
-          policy: {
-            profile: req.profile,
-            workspace: execCwd,
-            destinationWorkspace: destinationWorkspace ?? workspace,
-            inScope: req.inScope,
-            outOfScope: req.outOfScope,
-            artifactRoots: [dirs.root, dirs.input, dirs.result],
-            allowedRoots: req.config.workspace.allowedRoots,
-            skillRoots: childSkills,
-          },
-          timeoutMs: timeoutSec * 1000,
-          config: req.config,
-          structuredCompletion: imagePlanned || modalities.includes("vision"),
-          onProgress,
-          sessionHandle,
-        },
-        req.signal ?? new AbortController().signal,
-      );
-
-      const sdkArts = saveSdkDiagnostics(dirs, {
-        eventSummaryJsonl: outcome.eventsJsonl,
-        diagnostics: outcome.diagnostics,
-        toolSummary: {
-          toolCalls: outcome.toolCalls,
-          count: outcome.toolCalls.length,
-          failures: outcome.toolCalls.filter((t) => t.isError).length,
-        },
-        finalOutput: outcome.finalText,
-        maxEventMetadataBytes: req.config.limits.maxEventMetadataBytes,
-        maxFinalOutputBytes: req.config.limits.maxFinalOutputBytes,
-      });
-      artifacts.push(...sdkArts);
-
-      lastOutput = outcome.finalText;
-      cancelled = Boolean(outcome.cancelled) || outcome.completion === "cancelled";
-      lastCompletion = outcome.completion;
-      lastAgentStarted = outcome.agentStarted;
-      lastAgentEnded = outcome.agentEnded;
-
-      const attemptRec: AttemptRecord = {
-        backend: outcome.backend,
-        sdkVersion: outcome.sdkVersion,
-        provider: outcome.model.provider,
-        model: outcome.model.id,
-        thinking: outcome.model.thinking,
-        completion: outcome.completion,
-        agentStarted: outcome.agentStarted,
-        agentEnded: outcome.agentEnded,
-        toolCalls: outcome.toolCalls.length,
-        toolFailures: outcome.toolCalls.filter((t) => t.isError).length,
-        exitCode: outcome.exitCode ?? null,
-        status: outcome.timedOut
-          ? "timeout"
-          : outcome.cancelled
-            ? "cancelled"
-            : outcome.completion,
-        durationMs: outcome.durationMs,
-        error: outcome.error,
-      };
-      attempts.push(attemptRec);
-
-      // Never retry after cancel / timeout / abort
-      if (
-        outcome.cancelled ||
-        outcome.timedOut ||
-        outcome.completion === "cancelled" ||
-        outcome.completion === "timeout" ||
-        req.signal?.aborted
-      ) {
-        break;
-      }
-
-      if (req.profile === "implement" && attempt + 1 < maxAttempts) {
-        const missingHeading = !lastOutput.includes("# Implement Result");
-        const retryableFailure =
-          outcome.completion === "incomplete" ||
-          outcome.completion === "provider_error" ||
-          outcome.completion === "tool_error" ||
-          (outcome.completion === "completed" && missingHeading);
-        if (retryableFailure || missingHeading) {
-          continue;
-        }
-      }
-      break;
+    const piExecutor = req.executor ?? (await getPiExecutor(req.config));
+    const visionModels = loadProviderFile().vision_capable_models;
+    if (imagePlanned && !visionModels.includes(req.model)) {
+      assertVisionCapableModel(req.model);
     }
 
-    lastOutput = redactSecrets(lastOutput);
+    const outcome = await piExecutor.execute(
+      {
+        runId: dirs.runId,
+        attempt: 0,
+        cwd: workspace,
+        provider: req.provider,
+        model: req.model,
+        thinking: req.thinking,
+        tools,
+        excludeTools: [],
+        noTools,
+        prompt,
+        attachmentPaths: attachments,
+        textAttachments: [],
+        imageAttachments: [],
+        childSkillPaths: childSkills,
+        policy: {
+          tools,
+          noTools,
+          workspace,
+          destinationWorkspace: destinationWorkspace ?? workspace,
+          artifactRoots: [dirs.root, dirs.input, dirs.result],
+          allowedRoots: req.config.workspace.allowedRoots,
+          skillRoots: childSkills,
+        },
+        timeoutMs: timeoutSec * 1000,
+        config: req.config,
+        structuredCompletion: imagePlanned || modalities.includes("vision"),
+        onProgress,
+        sessionHandle,
+      },
+      req.signal ?? new AbortController().signal,
+    );
 
-    const checks = req.acceptanceChecks ?? [];
-    const acceptance = parseAcceptanceEvidence(lastOutput, checks);
-    let status = finalizeStatusFromOutcome({
-      completion: lastCompletion,
+    const sdkArts = saveSdkDiagnostics(dirs, {
+      eventSummaryJsonl: outcome.eventsJsonl,
+      diagnostics: outcome.diagnostics,
+      toolSummary: {
+        toolCalls: outcome.toolCalls,
+        count: outcome.toolCalls.length,
+        failures: outcome.toolCalls.filter((t) => t.isError).length,
+      },
+      finalOutput: outcome.finalText,
+      maxEventMetadataBytes: req.config.limits.maxEventMetadataBytes,
+      maxFinalOutputBytes: req.config.limits.maxFinalOutputBytes,
+    });
+    artifacts.push(...sdkArts);
+
+    const lastOutput = redactSecrets(outcome.finalText);
+    const cancelled =
+      Boolean(outcome.cancelled) || outcome.completion === "cancelled";
+    const attemptRec: AttemptRecord = {
+      backend: outcome.backend,
+      sdkVersion: outcome.sdkVersion,
+      provider: outcome.model.provider,
+      model: outcome.model.id,
+      thinking: outcome.model.thinking,
+      completion: outcome.completion,
+      agentStarted: outcome.agentStarted,
+      agentEnded: outcome.agentEnded,
+      toolCalls: outcome.toolCalls.length,
+      toolFailures: outcome.toolCalls.filter((t) => t.isError).length,
+      exitCode: outcome.exitCode ?? null,
+      status: outcome.timedOut
+        ? "timeout"
+        : outcome.cancelled
+          ? "cancelled"
+          : outcome.completion,
+      durationMs: outcome.durationMs,
+      error: outcome.error,
+    };
+    attempts.push(attemptRec);
+
+    const status = finalizeStatusFromOutcome({
+      completion: outcome.completion,
       cancelled,
       output: lastOutput,
-      profile: req.profile,
-      acceptance,
-      requireHeading: true,
-      agentStarted: lastAgentStarted,
-      agentEnded: lastAgentEnded,
+      acceptance: parseAcceptanceEvidence(lastOutput, []),
+      agentStarted: outcome.agentStarted,
+      agentEnded: outcome.agentEnded,
     });
-    if (
-      lastCompletion === "incomplete" &&
-      status === "success"
-    ) {
-      status = "incomplete";
-    }
-
-    // Delivery — patch always captured; apply only after successful finalize
-    let deliveryResult: DelegateResult["delivery"] =
-      delivery === "none" ? "none" : delivery;
-    const patchBaseline = initialTreeSha ?? baselineSha;
-    if (req.profile === "implement" && worktreePath && patchBaseline) {
-      let patchPath: string;
-      try {
-        patchPath = diffWorktreeToPatch(
-          worktreePath,
-          dirs.result,
-          patchBaseline,
-          { inScope: req.inScope, outOfScope: req.outOfScope },
-        );
-        artifacts.push({ kind: "result.patch", path: patchPath });
-      } catch (err) {
-        retainWorktree = true;
-        const resultPath = join(dirs.result, "result.json");
-        const arts = [
-          ...artifacts,
-          { kind: "worktree", path: worktreePath },
-          { kind: "result", path: resultPath },
-        ];
-        const result: DelegateResult = {
-          runId: dirs.runId,
-          status: "incomplete",
-          profile: req.profile,
-          provider: lastResolved.provider,
-          model: lastResolved.model,
-          thinking: lastResolved.thinking,
-          workspace,
-          workspaceMode,
-          delivery: deliveryResult,
-          output: lastOutput,
-          acceptance,
-          sideEffects: [],
-          artifacts: arts,
-          attempts,
-          durationMs: Date.now() - started,
-          sessionId,
-          code:
-            err instanceof DelegateError ? err.code : "incomplete_patch",
-          message: err instanceof Error ? err.message : String(err),
-        };
-        saveResultJson(dirs, result);
-        return result;
-      }
-
-      if (canApplyDelivery(delivery, status) && workspace) {
-        const retainedWorktree = worktreePath;
-        try {
-          applyPatchToWorkspace(workspace, patchPath);
-          if (repoRoot && worktreePath && !persistImpl) {
-            removeWorktree(repoRoot, worktreePath);
-            worktreePath = undefined;
-            cleanupWorktree = undefined;
-          }
-        } catch (err) {
-          retainWorktree = true;
-          const resultPath = join(dirs.result, "result.json");
-          const arts = [
-            ...artifacts,
-            ...(retainedWorktree
-              ? [{ kind: "worktree", path: retainedWorktree }]
-              : []),
-            { kind: "result", path: resultPath },
-          ];
-          // Keep worktree; mark incomplete
-          const result: DelegateResult = {
-            runId: dirs.runId,
-            status: "incomplete",
-            profile: req.profile,
-            provider: lastResolved.provider,
-            model: lastResolved.model,
-            thinking: lastResolved.thinking,
-            workspace,
-            workspaceMode,
-            delivery: "apply",
-            output: lastOutput,
-            acceptance,
-            sideEffects: [],
-            artifacts: arts,
-            attempts,
-            durationMs: Date.now() - started,
-            sessionId,
-            code: "apply_failed",
-            message: err instanceof Error ? err.message : String(err),
-          };
-          saveResultJson(dirs, result);
-          return result;
-        }
-      } else if (delivery === "apply" && worktreePath) {
-        // Failed / cancelled / incomplete — never apply; retain worktree
-        retainWorktree = true;
-        artifacts.push({ kind: "worktree", path: worktreePath });
-      }
-    }
-
-    // Verify: compare fingerprints (status + content hashes)
-    const sideEffects: string[] = [];
-    if (req.profile === "verify" && workspace && beforeFp) {
-      const afterFp = captureTreeFingerprint(workspace);
-      if (fingerprintsDiffer(beforeFp, afterFp)) {
-        sideEffects.push("working_tree_changed");
-      }
-    }
-
-    // Cleanup worktree for patch delivery / verify (unless deliberately retained)
-    if (worktreePath && repoRoot && !retainWorktree && delivery !== "apply") {
-      if (req.profile === "verify" || delivery === "patch") {
-        try {
-          removeWorktree(repoRoot, worktreePath);
-          worktreePath = undefined;
-          cleanupWorktree = undefined;
-        } catch {
-          artifacts.push({ kind: "worktree", path: worktreePath! });
-          retainWorktree = true;
-        }
-      }
-    }
 
     const resultPath = join(dirs.result, "result.json");
     artifacts.push({ kind: "result", path: resultPath });
     const result: DelegateResult = {
       runId: dirs.runId,
       status,
-      profile: req.profile,
-      provider: lastResolved.provider,
-      model: lastResolved.model,
-      thinking: lastResolved.thinking,
+      agentType: req.agentType,
+      taskName: req.taskName,
+      provider: req.provider,
+      model: req.model,
+      thinking: req.thinking,
       workspace,
-      workspaceMode,
-      delivery: deliveryResult,
+      workspaceMode: "in-place",
+      delivery: "none",
       output: lastOutput,
-      acceptance,
-      sideEffects,
+      acceptance: [],
+      sideEffects: [],
       artifacts: [...artifacts],
       attempts,
       durationMs: Date.now() - started,
@@ -741,10 +297,11 @@ export async function runDelegation(
       const result: DelegateResult = {
         runId: dirs.runId,
         status: "incomplete",
-        profile: req.profile,
-        provider: "",
-        model: "",
-        thinking: "",
+        agentType: req.agentType,
+        taskName: req.taskName,
+        provider: req.provider,
+        model: req.model,
+        thinking: req.thinking,
         output: "",
         acceptance: [],
         sideEffects: [],
@@ -760,13 +317,6 @@ export async function runDelegation(
     }
     throw err;
   } finally {
-    if (cleanupWorktree && !retainWorktree) {
-      try {
-        removeWorktree(cleanupWorktree.repoRoot, cleanupWorktree.path);
-      } catch {
-        // best-effort
-      }
-    }
     for (const lock of locks) lock.release();
     ownSessionLock?.release();
   }

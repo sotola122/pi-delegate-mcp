@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { cursorMcpJsonPath } from "../config/paths.js";
+import { ensureAgentHome, agentHomePath } from "../agents/home.js";
 import { stripJsonc, loadConfig } from "../config/loader.js";
 import { assetsRoot, assetExists } from "../prompt/assets.js";
 import { warnDeprecatedConfig } from "../config/schema.js";
@@ -65,9 +66,12 @@ export function installCursor(scope: "global" = "global"): void {
   };
 
   writeFileSync(path, JSON.stringify(doc, null, 2) + "\n", { mode: 0o600 });
+  const home = agentHomePath(loadConfig());
+  ensureAgentHome(home);
   console.log(`Installed ${SERVER_KEY} into ${path}`);
   console.log(`  command: ${resolveNodeExecutable()}`);
   console.log(`  script:  ${cliScript}`);
+  console.log(`  agents:  ${home}`);
 }
 
 export function uninstallCursor(scope: "global" = "global"): void {
@@ -143,7 +147,7 @@ export function doctorCommand(): void {
     );
     console.log(`allowed models: ${config.pi.allowedModels.join(", ")}`);
     console.log(
-      `childSkills: ${config.childSkills.enabled ? "enabled" : "disabled"}`,
+      `agent home: ${agentHomePath(config)}`,
     );
   } catch (err) {
     issues.push(err instanceof Error ? err.message : String(err));
@@ -170,7 +174,7 @@ export function doctorCommand(): void {
   } else {
     console.log("---");
     console.log(
-      "OK (OAuth via ModelRuntime; run: pi-delegate-mcp smoke  or MCP smoke_test)",
+      "OK (OAuth via ModelRuntime; run: pi-delegate-mcp smoke)",
     );
   }
 }

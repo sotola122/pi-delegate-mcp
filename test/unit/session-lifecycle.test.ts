@@ -3,7 +3,6 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -13,7 +12,6 @@ import { execSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { defaultConfig } from "../../src/config/schema.js";
 import { startRun, getRun, cancelRun } from "../../src/core/run-registry.js";
-import { startBatch, getBatch, batchToPublic } from "../../src/core/batch.js";
 import { DelegateError } from "../../src/core/errors.js";
 import { FakePiExecutor } from "../fakes/fake-pi-executor.js";
 import { setPiExecutorForTests } from "../../src/pi-sdk/factory.js";
@@ -21,12 +19,12 @@ import { immutableDelegationSafetyPrompt } from "../../src/pi-sdk/safety-prompt.
 import { parseRunArgs } from "../../src/cli/run.js";
 import { sessionsRoot } from "../../src/pi-sdk/session-store.js";
 import type { PiAttemptPlan } from "../../src/pi-sdk/types.js";
+import type { DelegateRequest } from "../../src/core/delegate.js";
 
 const cleanup: string[] = [];
 let prevStateHome: string | undefined;
 
 beforeEach(() => {
-  // Isolate run/lock dirs so live MCP verify/implement locks cannot stall these tests.
   prevStateHome = process.env.XDG_STATE_HOME;
   const isolated = mkdtempSync(join(tmpdir(), "pi-sess-state-"));
   process.env.XDG_STATE_HOME = isolated;
@@ -63,6 +61,20 @@ function cfgFor(workspace: string) {
   return config;
 }
 
+function req(
+  partial: Partial<DelegateRequest> & { message: string },
+): Omit<DelegateRequest, "config" | "signal" | "onProgress"> {
+  return {
+    taskName: "task",
+    tools: ["read", "grep", "find", "ls"],
+    noTools: false,
+    provider: "openai-codex",
+    model: "gpt-5.6-sol",
+    thinking: "high",
+    ...partial,
+  };
+}
+
 async function waitRun(runId: string, timeoutMs = 8_000) {
   const start = Date.now();
   for (;;) {
@@ -75,33 +87,16 @@ async function waitRun(runId: string, timeoutMs = 8_000) {
   }
 }
 
-async function waitBatch(batchId: string, timeoutMs = 12_000) {
-  const start = Date.now();
-  for (;;) {
-    const b = getBatch(batchId);
-    if (!b) throw new Error(`missing batch ${batchId}`);
-    const pub = batchToPublic(b);
-    if (pub.status !== "running") return pub;
-    if (Date.now() - start > timeoutMs) {
-      throw new Error(`batch ${batchId} still running`);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 30));
-  }
-}
-
 describe("immutableDelegationSafetyPrompt", () => {
-  it("uses destination workspace and omits inScope / worktree path", () => {
+  it("uses destination workspace and lists tools", () => {
     const text = immutableDelegationSafetyPrompt({
-      profile: "implement",
+      tools: ["read", "bash"],
       workspace: "/tmp/wt/run-1",
       destinationWorkspace: "/tmp/origin",
-      inScope: ["src"],
-      outOfScope: ["secrets"],
     });
     expect(text).toContain("/tmp/origin");
+    expect(text).toContain("read,bash");
     expect(text).not.toContain("/tmp/wt/run-1");
-    expect(text).not.toContain("inScope");
-    expect(text).not.toContain("- src");
   });
 });
 
@@ -109,9 +104,7 @@ describe("parseRunArgs --session-id", () => {
   it("parses a UUID session id", () => {
     const id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
     const args = parseRunArgs([
-      "--profile",
-      "review",
-      "--objective",
+      "--message",
       "go",
       "--session-id",
       id,
@@ -126,21 +119,17 @@ describe("persistent sessions via startRun", () => {
     const plans: PiAttemptPlan[] = [];
     const fake = new FakePiExecutor(async (plan) => {
       plans.push(plan);
-      return {
-        finalText: "# Review Result\n\n## Acceptance\n- ok: pass — done\n",
-        completion: "completed",
-      };
+      return { finalText: "done", completion: "completed" };
     });
     const config = cfgFor(ws);
     const first = startRun({
       config,
-      request: {
-        profile: "review",
-        objective: "first look",
+      request: req({
+        taskName: "reviewer",
+        message: "first look",
         workspace: ws,
-        reviewKind: "static-hunt",
         executor: fake,
-      },
+      }),
     });
     expect(first.sessionId).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
@@ -149,27 +138,23 @@ describe("persistent sessions via startRun", () => {
     expect(done1.status).toBe("success");
     expect(done1.result?.sessionId).toBe(first.sessionId);
     expect(plans[0]?.sessionHandle?.kind).toBe("create");
-    expect(plans[0]?.prompt).toMatch(/independent second opinion/);
+    expect(plans[0]?.prompt).toMatch(/Do not run `git commit`/);
 
     const second = startRun({
       config,
-      request: {
-        profile: "review",
-        objective: "follow up",
+      request: req({
+        taskName: "reviewer",
+        message: "follow up",
         workspace: ws,
-        reviewKind: "static-hunt",
         sessionId: first.sessionId,
         executor: fake,
-      },
+      }),
     });
     expect(second.sessionId).toBe(first.sessionId);
     const done2 = await waitRun(second.runId);
     expect(done2.status).toBe("success");
     expect(plans[1]?.sessionHandle?.kind).toBe("resume");
-    expect(plans[1]?.sessionHandle).toMatchObject({
-      sessionId: first.sessionId,
-    });
-    expect(plans[1]?.prompt).not.toMatch(/independent second opinion/);
+    expect(plans[1]?.prompt).not.toMatch(/Do not run `git commit`/);
     expect(plans[1]?.prompt).toMatch(/follow up/);
   });
 
@@ -178,18 +163,12 @@ describe("persistent sessions via startRun", () => {
     const config = cfgFor(ws);
     config.sessions.enabled = false;
     const fake = new FakePiExecutor(async () => ({
-      finalText: "# Review Result\n\n## Acceptance\n- ok: pass — done\n",
+      finalText: "ok",
       completion: "completed",
     }));
     const first = startRun({
       config,
-      request: {
-        profile: "review",
-        objective: "no persist",
-        workspace: ws,
-        reviewKind: "static-hunt",
-        executor: fake,
-      },
+      request: req({ message: "no persist", workspace: ws, executor: fake }),
     });
     expect(first.sessionId).toBeUndefined();
     await waitRun(first.runId);
@@ -198,14 +177,12 @@ describe("persistent sessions via startRun", () => {
     try {
       startRun({
         config,
-        request: {
-          profile: "review",
-          objective: "resume",
+        request: req({
+          message: "resume",
           workspace: ws,
-          reviewKind: "static-hunt",
           sessionId: randomUUID(),
           executor: fake,
-        },
+        }),
       });
     } catch (err) {
       expect(err).toBeInstanceOf(DelegateError);
@@ -222,35 +199,30 @@ describe("persistent sessions via startRun", () => {
     });
     const fake = new FakePiExecutor(async () => {
       await gate;
-      return {
-        finalText: "# Review Result\n\n## Acceptance\n- ok: pass — done\n",
-        completion: "completed",
-      };
+      return { finalText: "ok", completion: "completed" };
     });
     const config = cfgFor(ws);
     const first = startRun({
       config,
-      request: {
-        profile: "review",
-        objective: "hold lock",
+      request: req({
+        taskName: "hold",
+        message: "hold lock",
         workspace: ws,
-        reviewKind: "static-hunt",
         executor: fake,
-      },
+      }),
     });
     expect(first.sessionId).toBeTruthy();
     try {
       expect(() =>
         startRun({
           config,
-          request: {
-            profile: "review",
-            objective: "too soon",
+          request: req({
+            taskName: "hold",
+            message: "too soon",
             workspace: ws,
-            reviewKind: "static-hunt",
             sessionId: first.sessionId,
             executor: fake,
-          },
+          }),
         }),
       ).toThrow(/in use/);
     } finally {
@@ -260,112 +232,25 @@ describe("persistent sessions via startRun", () => {
     }
   });
 
-  it("reuses the implement worktree on attempt 2 and on resume", async () => {
+  it("runs in-place and keeps the session dir", async () => {
     const ws = initRepo();
-    const cwds: string[] = [];
     const fake = new FakePiExecutor(async (plan) => {
-      cwds.push(plan.cwd ?? "");
-      const target = join(plan.cwd!, "README.md");
-      if (plan.attempt === 0 && plan.sessionHandle?.kind === "create") {
-        writeFileSync(target, "v1\n");
-        return { finalText: "missing heading", completion: "incomplete" };
-      }
-      expect(readFileSync(target, "utf8")).toMatch(/v[12]/);
-      writeFileSync(target, `${readFileSync(target, "utf8").trim()}+edit\n`);
-      return {
-        finalText:
-          "# Implement Result\n\n## Acceptance\n- ok: pass — done\n",
-        completion: "completed",
-      };
+      writeFileSync(join(plan.cwd!, "README.md"), "edited\n");
+      return { finalText: "ok", completion: "completed" };
     });
     const config = cfgFor(ws);
     const first = startRun({
       config,
-      request: {
-        profile: "implement",
-        objective: "edit readme",
+      request: req({
+        taskName: "writer",
+        message: "edit",
         workspace: ws,
-        inScope: ["README.md"],
-        acceptanceChecks: ["ok"],
+        tools: ["read", "bash", "edit", "write", "grep", "find", "ls"],
         executor: fake,
-      },
+      }),
     });
-    const done1 = await waitRun(first.runId);
-    expect(done1.status).toBe("success");
-    expect(cwds.length).toBeGreaterThanOrEqual(2);
-    expect(cwds[0]).toBe(cwds[1]);
-    expect(existsSync(cwds[0]!)).toBe(true);
-    expect(readFileSync(join(cwds[0]!, "README.md"), "utf8")).toContain("v1");
-
-    const second = startRun({
-      config,
-      request: {
-        profile: "implement",
-        objective: "continue",
-        workspace: ws,
-        inScope: ["README.md"],
-        acceptanceChecks: ["ok"],
-        sessionId: first.sessionId,
-        executor: fake,
-      },
-    });
-    const done2 = await waitRun(second.runId);
-    expect(done2.status).toBe("success");
-    const resumePlan = cwds[cwds.length - 1];
-    expect(resumePlan).toBe(cwds[0]);
-    expect(readFileSync(join(resumePlan!, "README.md"), "utf8")).toContain(
-      "edit",
-    );
-  });
-});
-
-describe("batch sessions stay on destination workspace", () => {
-  it("returns per-child sessionId and does not delete origin sessions with the pipeline", async () => {
-    const ws = initRepo();
-    const fake = new FakePiExecutor(async (plan) => {
-      if (plan.profile === "verify") {
-        return {
-          finalText:
-            "# Verify Result\n\n## Acceptance\n- ok: pass — done\n",
-          completion: "completed",
-        };
-      }
-      return {
-        finalText: "# Review Result\n\n## Acceptance\n- ok: pass — done\n",
-        completion: "completed",
-      };
-    });
-    setPiExecutorForTests(fake);
-    const config = cfgFor(ws);
-    const started = startBatch({
-      config,
-      workspace: ws,
-      execution: "sequential",
-      tasks: [
-        {
-          roleId: "ver",
-          profile: "verify",
-          objective: "verify",
-          acceptanceChecks: ["ok"],
-        },
-        {
-          roleId: "rev",
-          profile: "review",
-          objective: "review",
-          reviewKind: "static-hunt",
-        },
-      ],
-    });
-    expect(started.runs[0]?.sessionId).toBeTruthy();
-    const done = await waitBatch(started.batchId);
+    const done = await waitRun(first.runId);
     expect(done.status).toBe("success");
-    const runs = done.runs as Array<{ roleId: string; sessionId?: string }>;
-    expect(runs.find((r) => r.roleId === "ver")?.sessionId).toBeTruthy();
-    expect(runs.find((r) => r.roleId === "rev")?.sessionId).toBeTruthy();
-    expect(getBatch(started.batchId)?.pipelineWorktree).toBeUndefined();
-    const verId = runs.find((r) => r.roleId === "ver")!.sessionId!;
-    const revId = runs.find((r) => r.roleId === "rev")!.sessionId!;
-    expect(existsSync(join(sessionsRoot(ws), verId))).toBe(true);
-    expect(existsSync(join(sessionsRoot(ws), revId))).toBe(true);
+    expect(existsSync(join(sessionsRoot(ws), first.sessionId!))).toBe(true);
   });
 });

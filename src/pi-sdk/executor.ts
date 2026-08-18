@@ -391,7 +391,6 @@ export class SdkPiExecutor implements PiExecutor {
       {
         runId: "smoke",
         attempt: 0,
-        profile: "no-tools",
         provider: plan.provider,
         model: plan.model,
         thinking: plan.thinking,
@@ -403,7 +402,7 @@ export class SdkPiExecutor implements PiExecutor {
         textAttachments: [],
         imageAttachments: [],
         childSkillPaths: [],
-        policy: { profile: "no-tools" },
+        policy: { tools: [], noTools: true },
         timeoutMs: plan.timeoutMs,
         config: plan.config,
       },

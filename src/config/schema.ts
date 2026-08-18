@@ -6,6 +6,7 @@ export type Effort = z.infer<typeof EffortSchema>;
 export const ModelSchema = z.enum(["gpt-5.6-sol", "gpt-5.6-luna"]);
 export type AllowedModel = z.infer<typeof ModelSchema>;
 
+/** @deprecated Role profiles are no longer used at runtime. */
 export const ProfileNameSchema = z.enum([
   "review",
   "verify",
@@ -17,8 +18,19 @@ export type ProfileName = z.infer<typeof ProfileNameSchema>;
 /** Wall-clock cap for a delegated Pi run (3h). Safety kill for hung children, not a duration estimate. */
 export const DEFAULT_TIMEOUT_SECONDS = 3 * 60 * 60;
 
-const ConfigSchemaV2 = z.object({
-  version: z.literal(2).default(2),
+const TimeoutSecondsSchema = z.preprocess((raw) => {
+  if (typeof raw === "number") return raw;
+  if (raw && typeof raw === "object") {
+    const o = raw as Record<string, unknown>;
+    for (const key of ["default", "implement", "verify", "review", "no-tools"]) {
+      if (typeof o[key] === "number") return o[key];
+    }
+  }
+  return DEFAULT_TIMEOUT_SECONDS;
+}, z.number().default(DEFAULT_TIMEOUT_SECONDS));
+
+const ConfigSchemaInner = z.object({
+  version: z.union([z.literal(2), z.literal(3)]).default(3),
   pi: z
     .object({
       /** @deprecated Ignored in SDK mode; warning only during migration. */
@@ -62,6 +74,7 @@ const ConfigSchemaV2 = z.object({
       passThrough: z.array(z.string()).default([]),
     })
     .optional(),
+  /** @deprecated Ignored at runtime; roles were replaced by agent templates. */
   profiles: z
     .object({
       review: z.object({ enabled: z.boolean().default(true) }).default({}),
@@ -75,6 +88,7 @@ const ConfigSchemaV2 = z.object({
       "no-tools": z.object({ enabled: z.boolean().default(true) }).default({}),
     })
     .default({}),
+  /** @deprecated Ignored at runtime. */
   manual: z
     .object({
       enabled: z.boolean().default(true),
@@ -82,6 +96,11 @@ const ConfigSchemaV2 = z.object({
       allowedProfiles: z
         .array(ProfileNameSchema)
         .default(["review", "no-tools"]),
+    })
+    .default({}),
+  agents: z
+    .object({
+      home: z.string().default("~/.cursor/pi-delegate"),
     })
     .default({}),
   workspace: z
@@ -97,15 +116,8 @@ const ConfigSchemaV2 = z.object({
     .default({}),
   limits: z
     .object({
-      timeoutSeconds: z
-        .object({
-          // Hang kill, not an ETA. Delegated runs are long and unpredictable.
-          review: z.number().default(DEFAULT_TIMEOUT_SECONDS),
-          verify: z.number().default(DEFAULT_TIMEOUT_SECONDS),
-          implement: z.number().default(DEFAULT_TIMEOUT_SECONDS),
-          "no-tools": z.number().default(DEFAULT_TIMEOUT_SECONDS),
-        })
-        .default({}),
+      timeoutSeconds: TimeoutSecondsSchema,
+      waitBudgetMs: z.number().int().positive().default(1500),
       maxPromptBytes: z.number().default(262144),
       maxAttachmentCount: z.number().default(32),
       maxChildSkillCount: z.number().default(16),
@@ -121,11 +133,11 @@ const ConfigSchemaV2 = z.object({
   concurrency: z
     .object({
       global: z.number().default(4),
-      review: z.number().default(4),
-      judge: z.number().default(4),
-      verify: z.number().default(2),
-      implement: z.number().default(1),
       perWorkspaceWritable: z.number().default(1),
+      review: z.number().optional(),
+      judge: z.number().optional(),
+      verify: z.number().optional(),
+      implement: z.number().optional(),
     })
     .default({}),
   artifacts: z
@@ -150,7 +162,7 @@ const ConfigSchemaV2 = z.object({
     .default({}),
 });
 
-export type AppConfig = z.infer<typeof ConfigSchemaV2>;
+export type AppConfig = z.infer<typeof ConfigSchemaInner>;
 
 export interface ConfigV1Input {
   version?: 1;
@@ -168,7 +180,7 @@ export function migrateConfigV1(input: ConfigV1Input): Record<string, unknown> {
   const { environment, pi, version: _v, ...rest } = input;
   const migrated: Record<string, unknown> = {
     ...rest,
-    version: 2,
+    version: 3,
     pi: {
       provider: pi?.provider ?? "openai-codex",
       defaultModel: pi?.defaultModel ?? "gpt-5.6-sol",
@@ -185,8 +197,6 @@ export function migrateConfigV1(input: ConfigV1Input): Record<string, unknown> {
 export const ConfigSchema = z.preprocess((raw) => {
   if (!raw || typeof raw !== "object") return raw;
   const obj = raw as Record<string, unknown>;
-  // Full migrate only for explicit/detected v1 — never for version 2
-  if (obj.version === 2) return obj;
   if (obj.version === 1) {
     return migrateConfigV1(obj as ConfigV1Input);
   }
@@ -199,11 +209,17 @@ export const ConfigSchema = z.preprocess((raw) => {
   ) {
     return migrateConfigV1(obj as ConfigV1Input);
   }
+  if (obj.version === 2) {
+    return { ...obj, version: 2 };
+  }
+  if (obj.version === undefined) {
+    return { ...obj, version: 3 };
+  }
   return obj;
-}, ConfigSchemaV2);
+}, ConfigSchemaInner);
 
 export function defaultConfig(): AppConfig {
-  return ConfigSchema.parse({ version: 2 });
+  return ConfigSchema.parse({ version: 3 });
 }
 
 export function warnDeprecatedConfig(config: AppConfig): string[] {

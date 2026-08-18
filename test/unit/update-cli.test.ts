@@ -7,7 +7,6 @@ import {
 } from "../../src/cli/update.js";
 
 afterEach(() => {
-  process.exitCode = undefined;
   vi.restoreAllMocks();
 });
 
@@ -39,6 +38,7 @@ describe("parseUpdateArgs", () => {
 describe("updateCommand", () => {
   it("--check exits 0 when up to date", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const codes: number[] = [];
     const npm: NpmRunner = (args) => {
       expect(args).toEqual(["view", PACKAGE_NAME, "version"]);
       return {
@@ -54,13 +54,15 @@ describe("updateCommand", () => {
     updateCommand(["--check"], {
       npm,
       installedVersion: () => "0.2.1",
+      setExitCode: (c) => codes.push(c),
     });
-    expect(process.exitCode).toBeUndefined();
+    expect(codes).toEqual([]);
     expect(log.mock.calls.flat().join("\n")).toMatch(/up to date/);
   });
 
   it("--check exits 1 when update available", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
+    const codes: number[] = [];
     const npm: NpmRunner = () => ({
       status: 0,
       stdout: "0.3.0\n",
@@ -73,13 +75,15 @@ describe("updateCommand", () => {
     updateCommand(["--check"], {
       npm,
       installedVersion: () => "0.2.1",
+      setExitCode: (c) => codes.push(c),
     });
-    expect(process.exitCode).toBe(1);
+    expect(codes).toEqual([1]);
   });
 
   it("runs npm install -g with target version", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     const calls: string[][] = [];
+    const codes: number[] = [];
     const npm: NpmRunner = (args, opts) => {
       calls.push(args);
       expect(opts?.stdio).toBe("inherit");
@@ -96,14 +100,16 @@ describe("updateCommand", () => {
     updateCommand(["0.2.1"], {
       npm,
       installedVersion: () => "0.2.0",
+      setExitCode: (c) => codes.push(c),
     });
     expect(calls).toEqual([["install", "-g", `${PACKAGE_NAME}@0.2.1`]]);
-    expect(process.exitCode).toBeUndefined();
+    expect(codes).toEqual([]);
   });
 
   it("fails with hint when npm install fails", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const codes: number[] = [];
     const npm: NpmRunner = () => ({
       status: 1,
       stdout: "",
@@ -116,8 +122,9 @@ describe("updateCommand", () => {
     updateCommand([], {
       npm,
       installedVersion: () => "0.2.1",
+      setExitCode: (c) => codes.push(c),
     });
-    expect(process.exitCode).toBe(1);
+    expect(codes).toEqual([1]);
     expect(err.mock.calls.flat().join("\n")).toMatch(/read:packages/);
   });
 });

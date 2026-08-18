@@ -1,47 +1,58 @@
 import { readFileSync } from "node:fs";
 import { loadConfig } from "../config/loader.js";
 import { runDelegation } from "../core/delegate.js";
-import type { ProfileName, Effort, AllowedModel } from "../config/schema.js";
-import { EffortSchema, ModelSchema, ProfileNameSchema } from "../config/schema.js";
+import { resolveAgentContext } from "../agents/resolve.js";
+import type { Effort, AllowedModel } from "../config/schema.js";
+import { EffortSchema, ModelSchema } from "../config/schema.js";
 
 export interface RunCliArgs {
-  profile: ProfileName;
   workspace?: string;
-  objective: string;
-  manualFile?: string;
-  promptMode?: "append" | "replace";
+  message: string;
+  prompt?: string;
+  agentType?: string;
   effort?: Effort;
   model?: AllowedModel;
-  delivery?: "patch" | "apply";
-  acceptanceChecks?: string[];
-  inScope?: string[];
+  provider?: string;
+  skills?: string[];
   timeoutSeconds?: number;
   sessionId?: string;
 }
 
 export async function runCommand(args: RunCliArgs): Promise<void> {
   const config = loadConfig();
-  const manualPrompt = args.manualFile
-    ? readFileSync(args.manualFile, "utf8")
-    : undefined;
-
+  const ctx = resolveAgentContext({
+    config,
+    workspace: args.workspace,
+    overrides: {
+      prompt: args.prompt,
+      skills: args.skills,
+      model: args.model,
+      provider: args.provider,
+      effort: args.effort,
+      agentType: args.agentType,
+    },
+  });
   const result = await runDelegation({
     config,
-    profile: args.profile,
+    taskName: "cli",
+    message: args.message,
+    prompt: args.prompt,
+    developerInstructions: ctx.developerInstructions,
+    agentsMd: ctx.agentsMd,
+    tools: ctx.tools,
+    noTools: ctx.noTools,
+    provider: ctx.provider,
+    model: ctx.model,
+    thinking: ctx.thinking,
+    effort: ctx.effort,
     workspace: args.workspace,
-    objective: args.objective,
-    manualPrompt,
-    promptMode: args.promptMode ?? "append",
-    effort: args.effort,
-    model: args.model,
-    delivery: args.delivery,
-    acceptanceChecks: args.acceptanceChecks,
-    inScope: args.inScope,
+    childSkills: ctx.skills,
     timeoutSeconds: args.timeoutSeconds,
     sessionId: args.sessionId,
+    agentType: args.agentType ?? ctx.name,
   });
 
-  console.log(JSON.stringify(result, null, 2));
+  console.log(JSON.stringify(result));
   if (result.status !== "success") process.exitCode = 1;
 }
 
@@ -51,48 +62,37 @@ export function parseRunArgs(argv: string[]): RunCliArgs {
     const a = argv[i]!;
     if (!a.startsWith("--")) continue;
     const key = a.slice(2);
-    const alias = key === "manual" ? "manual-file" : key;
     const next = argv[i + 1];
     if (!next || next.startsWith("--")) {
-      out[alias] = "true";
+      out[key] = "true";
     } else {
-      if (
-        alias === "acceptance-check" ||
-        alias === "in-scope"
-      ) {
-        const arr = (out[alias] as string[] | undefined) ?? [];
+      if (key === "skill") {
+        const arr = (out[key] as string[] | undefined) ?? [];
         arr.push(next);
-        out[alias] = arr;
+        out[key] = arr;
       } else {
-        out[alias] = next;
+        out[key] = next;
       }
       i++;
     }
   }
 
-  const profile = ProfileNameSchema.parse(out.profile ?? "review");
-  const objective = String(out.objective ?? "");
-  if (!objective) throw new Error("--objective is required");
+  const message = String(out.message ?? out.objective ?? "");
+  if (!message) throw new Error("--message is required");
 
   return {
-    profile,
     workspace: out.workspace ? String(out.workspace) : undefined,
-    objective,
-    manualFile: out["manual-file"] ? String(out["manual-file"]) : undefined,
-    promptMode:
-      out["prompt-mode"] === "replace" ? "replace" : "append",
+    message,
+    prompt: out.prompt
+      ? String(out.prompt)
+      : out["prompt-file"]
+        ? readFileSync(String(out["prompt-file"]), "utf8")
+        : undefined,
+    agentType: out["agent-type"] ? String(out["agent-type"]) : undefined,
     effort: out.effort ? EffortSchema.parse(out.effort) : undefined,
     model: out.model ? ModelSchema.parse(out.model) : undefined,
-    delivery:
-      out.delivery === "apply" || out.delivery === "patch"
-        ? out.delivery
-        : undefined,
-    acceptanceChecks: Array.isArray(out["acceptance-check"])
-      ? (out["acceptance-check"] as string[])
-      : undefined,
-    inScope: Array.isArray(out["in-scope"])
-      ? (out["in-scope"] as string[])
-      : undefined,
+    provider: out.provider ? String(out.provider) : undefined,
+    skills: Array.isArray(out.skill) ? (out.skill as string[]) : undefined,
     timeoutSeconds: out["timeout-seconds"]
       ? Number(out["timeout-seconds"])
       : undefined,

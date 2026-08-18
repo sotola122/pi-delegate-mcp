@@ -25,7 +25,8 @@ export interface AttemptRecord {
 export interface DelegateResult {
   runId: string;
   status: "success" | "incomplete" | "failed" | "cancelled";
-  profile: "review" | "verify" | "implement" | "no-tools";
+  agentType?: string;
+  taskName?: string;
   provider: string;
   model: string;
   thinking: string;
@@ -121,9 +122,7 @@ export function finalizeStatusFromOutcome(opts: {
   completion: string;
   cancelled?: boolean;
   output: string;
-  profile: string;
   acceptance: AcceptanceEvidence[];
-  requireHeading: boolean;
   agentStarted?: boolean;
   agentEnded?: boolean;
 }): DelegateResult["status"] {
@@ -135,9 +134,6 @@ export function finalizeStatusFromOutcome(opts: {
     opts.completion === "internal_error"
   ) {
     return "failed";
-  }
-  if (opts.requireHeading && !outputHasHeading(opts.output, opts.profile)) {
-    return "incomplete";
   }
   if (opts.acceptance.length > 0 && opts.acceptance.some((a) => a.status === "unknown")) {
     return "incomplete";
@@ -168,9 +164,7 @@ export function finalizeStatus(
           : "completed",
     cancelled,
     output,
-    profile,
     acceptance,
-    requireHeading,
     agentStarted: true,
     agentEnded: exitCode === 0 && !cancelled,
   });

@@ -1,4 +1,4 @@
-import type { AppConfig, ProfileName } from "../config/schema.js";
+import type { AppConfig } from "../config/schema.js";
 import type { ProgressCallback } from "../core/progress.js";
 import type { SessionHandle } from "./session-store.js";
 
@@ -32,7 +32,8 @@ export interface MaterializedImageAttachment {
 }
 
 export interface DelegationPolicy {
-  profile: ProfileName;
+  tools: string[];
+  noTools?: boolean;
   workspace?: string;
   inScope?: string[];
   outOfScope?: string[];
@@ -47,7 +48,6 @@ export interface PiAttemptPlan {
   runId: string;
   attempt: number;
   cwd?: string;
-  profile: ProfileName;
   provider: string;
   model: string;
   thinking: ThinkingLevel;

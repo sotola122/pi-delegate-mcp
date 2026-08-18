@@ -2,6 +2,10 @@
 
 Delegate bounded coding tasks from MCP clients (Cursor) to [Pi Coding Agent](https://github.com/earendil-works/pi) over stdio via the official SDK (`@earendil-works/pi-coding-agent`).
 
+The MCP surface follows the Codex-style subagent tools (`spawn` / `wait` / `list` / `read` / `send` / `interrupt`). Child settings come from agent templates under `~/.cursor/pi-delegate/`, not from review/implement **roles**.
+
+**Breaking change:** `delegate_review`, `delegate_verify`, `delegate_implement`, `delegate_judge`, `delegate_manual`, `delegate_batch`, `delegate_roles`, `get_run`, `get_batch`, `cancel_run`, `cancel_batch`, and MCP `smoke_test` are removed. Use `spawn_agent` plus `wait_agent` (or `wait_all_agents`). CLI `pi-delegate-mcp smoke` remains.
+
 ## Requirements
 
 - Node.js **22.19+**
@@ -25,7 +29,7 @@ pi-delegate-mcp doctor
 pi-delegate-mcp auth status
 ```
 
-Then restart Cursor. The server registers as `pi-delegate` in `~/.cursor/mcp.json`.
+Then restart Cursor. The server registers as `pi-delegate` in `~/.cursor/mcp.json`. `install cursor` seeds `~/.cursor/pi-delegate/` (AGENTS.md, config.toml, empty `agents/`) and does not overwrite files that already exist.
 
 ## Update
 
@@ -41,52 +45,76 @@ Does not modify `~/.cursor/mcp.json`. Restart Cursor afterward so the MCP server
 
 | Tool | Purpose |
 | --- | --- |
-| `delegate_review` | Read-only review / static hunt (async; optional `perspectives`) |
-| `delegate_verify` | Build / test / lint (async) |
-| `delegate_implement` | Implement in worktree (async; default patch) |
-| `delegate_judge` | Judge with no-tools profile (async) |
-| `delegate_manual` | Manual prompt under fixed profile (async) |
-| `delegate_batch` | Multi-task parallel/sequential batch (max 32 tasks) |
-| `delegate_roles` | Role-based pipeline (implement → verify → reviews; max 32 roles) |
-| `get_run` / `cancel_run` | Poll / cancel a single run |
-| `get_batch` / `cancel_batch` | Poll / cancel a batch |
-| `smoke_test` | SDK connectivity / OAuth / provider check (async; poll `get_run`; `stdout` must be `OK`) |
+| `spawn_agent` | Start a Pi subagent. Returns immediately `{name,status:"running"}`. |
+| `wait_agent` | Wait briefly for one agent. Still running → compact status + `wait` seconds. |
+| `wait_all_agents` | Same short wait until targeted agents are terminal. |
+| `list_agents` | List agents in this MCP process / workspace (`name` + `status`). |
+| `read_agent_response` | Latest final text only (no intermediate tool calls). |
+| `send_message` | Steer a running agent (queued next turn) or start another turn when settled. |
+| `interrupt_agent` | Abort the current turn. The session remains for `send_message`. |
 
-Long-running tools — including `smoke_test` — return `{ status: "running", runId|batchId }` immediately. Poll with `get_run` / `get_batch` until complete (avoids Cursor MCP client timeouts). When sessions are enabled (default), the start payload also includes `sessionId`. Pass that id back on the next **same-role** call (`delegate_review` → `delegate_review`, etc.) so Pi can reuse the conversation cache. Cross-role reuse is rejected. `smoke_test` never persists a session.
+`spawn_agent` inputs: `task_name` and `message` (required); optional `prompt`, `skills`, `agent_type`, `model`, `provider`, `effort`, `workspace`. Settings resolve per key: spawn args → `agents/*.toml` → `config.toml` `[agents]` → app defaults. **`tools` has no role default** — the template or `[agents]` must list them, or spawn fails. The parent cannot pass a tool allowlist.
+
+Cursor MCP clients time out on long blocking calls, so `wait_*` never wait forever. Default budget is `limits.waitBudgetMs` (1500ms). Poll again using the returned `wait` seconds.
+
+Responses are minified JSON with short keys (`name`, `status`, `text`, `wait`). Final text is head-truncated; the full artifact path is in `full` when truncated.
+
+Identity is `task_name`. `send_message` reuses that session. Parallel work is multiple `spawn_agent` calls plus `wait_all_agents`.
+
+CLI (sync, for a terminal): `pi-delegate-mcp run --message <text> [--agent-type <name>] [--prompt …] [--skill …]`. Resume with `--session-id <uuid>`. Connectivity check: `pi-delegate-mcp smoke [--mode planned-tuple|provider-auth]`.
 
 Sessions live under `<workspace>/.pi-delegate/sessions/` (gitignored, `0700` / `0600`). Disable with `sessions.enabled: false`. Concurrent follow-ups on the same id fail with `session_busy`.
 
-CLI (sync, for a terminal): `pi-delegate-mcp smoke [--mode planned-tuple|provider-auth]`. Resume a CLI run with `--session-id <uuid>`.
+## Agent home (Codex-format templates)
+
+Layout (`agents.home`, default `~/.cursor/pi-delegate`):
+
+- `config.toml` — `[agents]` defaults (provider / model / reasoning / tools / skills)
+- `AGENTS.md` — always-on child context. `AGENTS.override.md` wins if present. Repository `AGENTS.md` is **not** auto-loaded
+- `agents/*.toml` — named agent types (`agent_type` is the TOML `name` or file stem)
+
+```toml
+name = "reviewer"
+description = "Focused read-only review"
+provider = "openai-codex"
+model = "gpt-5.6-sol"
+model_reasoning_effort = "xhigh"
+tools = ["read", "grep", "find", "ls"]
+developer_instructions = """
+Return concise findings with file paths.
+"""
+
+[[skills.config]]
+path = "~/.agents/skills/code-review"
+enabled = true
+```
+
+Allowed `tools`: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`. Unknown names are rejected. An empty list is no-tools. `bash` / `edit` / `write` take the existing writable workspace lock. Work is **in-place** (no default worktree). `sandbox_mode` and `mcp_servers` in TOML are ignored.
 
 ## Effort
 
 `med` | `high` | `xhigh` | `max` → Pi thinking `medium` | `high` | `xhigh` | `max`.
 
-When `model` / `effort` are omitted, per-profile defaults from `assets/delegate-pi/provider.yaml` apply:
-
-| Profile | Default |
-| --- | --- |
-| `review` / `verify` / `no-tools` | `gpt-5.6-sol` / `xhigh` |
-| `implement` | `gpt-5.6-luna` / `max` |
+When spawn omits `model` / `provider` / `effort`, the selected agent TOML then `[agents]` then app defaults (`pi.provider`, `pi.defaultModel`) apply. TOML may use `model_reasoning_effort`, `thinking`, or `reasoning`.
 
 ## Child skills
 
-`childSkills` passes explicit skill paths (`SKILL.md` or a directory containing it) to the child agent. Ambient skill discovery stays off. Enabled by default.
+`spawn_agent.skills` (paths or names under `~/.cursor/skills` / `~/.agents/skills`) are **added** to skills declared on the template. Ambient Pi skill discovery stays off. Disable with `childSkills.enabled: false`.
 
-Validated packages are passed through as Pi skill paths; the delegation policy allows reading those selected packages only (no copy, no path allowlist). Disable with `childSkills.enabled: false` if needed.
+Validated packages are passed through as Pi skill paths; the delegation policy allows reading those selected packages only.
 
 ## Safety
 
 - SDK tool allowlist is a **model tool allowlist, not an OS sandbox**. Policy extensions additionally block dangerous commands.
-- Implement defaults to worktree + patch (does not modify your tree).
-- Manual prompts cannot widen tools.
-- Ambient skills / extensions / AGENTS.md are not loaded.
+- Child tools come from templates / `[agents]`, not from MCP arguments.
+- Default execution is in-place. Writable tools take the workspace lock.
+- Ambient Pi skills / extensions / prompt templates / repo `AGENTS.md` are not loaded. Home `AGENTS.md` is injected on purpose.
 - No auto commit, push, PR, or deploy.
-- Read-only attachments may include files under built-in trusted roots such as `~/.cursor/plans` (Cursor Plan Mode), `~/.cursor/skills`, `~/.agents/skills`, and staged `delegate-pi` / run artifact dirs. These are **not** writable workspaces; implement/apply still cannot write outside the resolved workspace / `allowedRoots`.
+- Read-only attachments may include files under built-in trusted roots such as `~/.cursor/plans` (Cursor Plan Mode), `~/.cursor/skills`, `~/.agents/skills`, and staged `delegate-pi` / run artifact dirs. These are **not** writable workspaces.
 
 ## Config
 
-`pi-delegate-mcp config path` prints the JSONC config location (version 2).
+`pi-delegate-mcp config path` prints the JSONC config location (version 3). `profiles` / `manual` keys are ignored if still present.
 
 Auth:
 

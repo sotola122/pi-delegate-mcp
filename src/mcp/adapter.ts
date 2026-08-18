@@ -1,6 +1,5 @@
-import type { DelegateResult } from "../core/result.js";
-import { isInfrastructureError, DelegateError } from "../core/errors.js";
-import { redactSecrets } from "../artifacts/redact.js";
+import { DelegateError } from "../core/errors.js";
+import { compactJson } from "./compact.js";
 
 export function jsonToMcpContent(
   value: unknown,
@@ -13,18 +12,11 @@ export function jsonToMcpContent(
     content: [
       {
         type: "text",
-        text: redactSecrets(JSON.stringify(value, null, 2)),
+        text: compactJson(value),
       },
     ],
     ...(isError ? { isError: true } : {}),
   };
-}
-
-export function resultToMcpContent(result: DelegateResult): {
-  content: Array<{ type: "text"; text: string }>;
-  isError?: boolean;
-} {
-  return jsonToMcpContent(result);
 }
 
 export function errorToMcpContent(err: unknown): {
@@ -36,15 +28,11 @@ export function errorToMcpContent(err: unknown): {
       content: [
         {
           type: "text",
-          text: JSON.stringify(
-            {
-              status: "failed",
-              code: err.code,
-              message: err.message,
-            },
-            null,
-            2,
-          ),
+          text: compactJson({
+            status: "failed",
+            code: err.code,
+            err: err.message,
+          }),
         },
       ],
       isError: err.infrastructure,
@@ -55,15 +43,13 @@ export function errorToMcpContent(err: unknown): {
     content: [
       {
         type: "text",
-        text: JSON.stringify(
-          { status: "failed", code: "internal_error", message },
-          null,
-          2,
-        ),
+        text: compactJson({
+          status: "failed",
+          code: "internal_error",
+          err: message,
+        }),
       },
     ],
     isError: true,
   };
 }
-
-export { isInfrastructureError };

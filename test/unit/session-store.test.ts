@@ -25,7 +25,7 @@ import { DelegateError } from "../../src/core/errors.js";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 const identity = {
-  profile: "review" as const,
+  taskName: "reviewer",
   provider: "openai-codex",
   model: "gpt-5.6-sol",
 };
@@ -140,7 +140,7 @@ describe("session-store identity and resume", () => {
     expect(mgr.getSessionId()).toBe(created.handle.sessionId);
   });
 
-  it("rejects profile, provider, and model mismatch", () => {
+  it("rejects taskName, provider, and model mismatch", () => {
     const ws = tempWs("pi-sess-mm");
     cleanup.push(ws);
     const created = createPersistedSession({ workspace: ws, identity });
@@ -149,7 +149,7 @@ describe("session-store identity and resume", () => {
       openPersistedSession({
         workspace: ws,
         sessionId: created.handle.sessionId,
-        expected: { ...identity, profile: "implement" },
+        expected: { ...identity, taskName: "other" },
       }),
     ).toThrow(/Session mismatch/);
     expect(() =>

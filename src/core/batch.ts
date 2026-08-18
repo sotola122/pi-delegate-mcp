@@ -167,46 +167,16 @@ function maxTasks(): number {
 }
 
 function launchTask(
-  batchId: string,
-  task: BatchTaskSpec,
-  spec: BatchSpec,
-  workspaceOverride?: string,
+  _batchId: string,
+  _task: BatchTaskSpec,
+  _spec: BatchSpec,
+  _workspaceOverride?: string,
 ): BatchChild {
-  const started = startRun({
-    config: spec.config,
-    batchId,
-    roleId: task.roleId,
-    request: {
-      profile: task.profile,
-      objective: task.objective,
-      workspace: workspaceOverride ?? spec.workspace,
-      mcpRoots: spec.mcpRoots,
-      reviewKind: task.reviewKind,
-      baseline: task.baseline,
-      inScope: task.inScope,
-      outOfScope: task.outOfScope,
-      acceptanceChecks: task.acceptanceChecks,
-      suggestedChecks: task.suggestedChecks,
-      lenses: task.lenses,
-      focus: task.focus,
-      effort: task.effort,
-      model: task.model,
-      attachments: task.attachments,
-      childSkills: task.childSkills,
-      workspaceMode: task.workspaceMode,
-      delivery: task.delivery,
-      timeoutSeconds: task.timeoutSeconds,
-      manualPrompt: task.manualPrompt,
-      promptMode: task.promptMode,
-      sessionId: task.sessionId,
-      destinationWorkspace: spec.workspace,
-    },
-  });
-  return {
-    roleId: task.roleId,
-    runId: started.runId,
-    ...(started.sessionId ? { sessionId: started.sessionId } : {}),
-  };
+  throw new DelegateError(
+    "Role batches were removed; spawn agents instead",
+    "roles_removed",
+    true,
+  );
 }
 
 async function waitRunTerminal(runId: string): Promise<RunRecord> {
@@ -243,8 +213,9 @@ export function advancePipelineWorkspace(opts: {
   let pipelineWorktree = opts.pipelineWorktree;
 
   for (const r of opts.prevResults) {
-    if (r.status !== "success" || r.result?.profile !== "implement") continue;
+    if (r.status !== "success") continue;
     const result = r.result;
+    if (!result) continue;
     if (result.delivery === "apply") {
       // Original workspace already has the edits.
       pipelineWorkspace = opts.originWorkspace;

@@ -26,7 +26,7 @@ export function isPathInside(parent: string, child: string): boolean {
  * workspaces). Cursor plans/skills and staged delegate-pi / run artifacts.
  */
 export function trustedAttachmentRoots(): string[] {
-  const home = homedir();
+  const home = process.env.HOME || process.env.USERPROFILE || homedir();
   return [
     join(home, ".cursor", "plans"),
     join(home, ".cursor", "skills"),

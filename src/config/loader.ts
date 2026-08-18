@@ -87,7 +87,7 @@ export function normalizeLoadedConfig(parsed: unknown): unknown {
   }
 
   if (obj.version === undefined) {
-    obj.version = 2;
+    obj.version = 3;
   }
 
   return obj;

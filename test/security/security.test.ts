@@ -31,7 +31,7 @@ describe("security", () => {
   it("policy blocks dangerous bash", () => {
     expect(
       evaluateToolCall(
-        { profile: "implement" },
+        { tools: ["read", "bash", "edit", "write", "grep", "find", "ls"] },
         { name: "bash", input: { command: "npm publish" } },
       ).kind,
     ).toBe("deny");
@@ -40,13 +40,13 @@ describe("security", () => {
   it("blocks git push with intervening -C options", () => {
     expect(
       evaluateToolCall(
-        { profile: "implement" },
+        { tools: ["read", "bash", "edit", "write", "grep", "find", "ls"] },
         { name: "bash", input: { command: 'git -C "$PWD" push' } },
       ).kind,
     ).toBe("deny");
     expect(
       evaluateToolCall(
-        { profile: "implement" },
+        { tools: ["read", "bash", "edit", "write", "grep", "find", "ls"] },
         {
           name: "bash",
           input: { command: "git --git-dir=/tmp/x.git push origin main" },
@@ -58,13 +58,13 @@ describe("security", () => {
   it("blocks path-qualified git dangerous subcommands", () => {
     expect(
       evaluateToolCall(
-        { profile: "implement" },
+        { tools: ["read", "bash", "edit", "write", "grep", "find", "ls"] },
         { name: "bash", input: { command: "/usr/bin/git push origin main" } },
       ).kind,
     ).toBe("deny");
     expect(
       evaluateToolCall(
-        { profile: "implement" },
+        { tools: ["read", "bash", "edit", "write", "grep", "find", "ls"] },
         { name: "bash", input: { command: "./git commit -m x" } },
       ).kind,
     ).toBe("deny");
@@ -80,7 +80,7 @@ describe("security", () => {
     symlinkSync(secretDir, join(ws, "visible"));
     try {
       const decision = evaluateToolCall(
-        { profile: "review", workspace: ws },
+        { tools: ["read", "grep", "find", "ls"], workspace: ws },
         { name: "read", input: { path: join(ws, "visible", "id_rsa") } },
       );
       expect(decision.kind).toBe("deny");
@@ -112,7 +112,7 @@ describe("security", () => {
     symlinkSync(join(outside, "new.txt"), link);
     try {
       const decision = evaluateToolCall(
-        { profile: "implement", workspace: ws },
+        { tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], workspace: ws },
         { name: "write", input: { path: link } },
       );
       expect(decision.kind).toBe("deny");
@@ -129,7 +129,7 @@ describe("security", () => {
     symlinkSync(join(ws, "new.txt"), link);
     try {
       const decision = evaluateToolCall(
-        { profile: "implement", workspace: ws },
+        { tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], workspace: ws },
         { name: "write", input: { path: link } },
       );
       expect(decision.kind).toBe("allow");

@@ -92,9 +92,13 @@ describe("runToPublic views and heartbeat", () => {
     const started = startRun({
       config: defaultConfig(),
       request: {
-        profile: "review",
-        objective: "poll test",
-        reviewKind: "static-hunt",
+        taskName: "poll",
+        message: "poll test",
+        tools: ["read", "grep", "find", "ls"],
+        noTools: false,
+        provider: "openai-codex",
+        model: "gpt-5.6-sol",
+        thinking: "high",
         executor: fake,
       },
     });
@@ -122,9 +126,8 @@ describe("runToPublic views and heartbeat", () => {
 
     const statusView = runToPublic(after, "status");
     expect(statusView.result).toBeUndefined();
-    expect(statusView.pollAfterSeconds).toBe(15);
-    expect(statusView.hint).toBe(POLL_HINT);
-    expect(statusView.progress).toMatchObject({ phase: "tools" });
+    expect(statusView.wait).toBe(15);
+    expect(statusView.poll).toBe("wait_agent");
 
     const fullWhileRunning = runToPublic(after, "full");
     expect(fullWhileRunning.result).toBeNull();
@@ -150,8 +153,8 @@ describe("startSmoke", () => {
     expect(running?.status).toBe("running");
     const statusView = runToPublic(running!, "status");
     expect(statusView.result).toBeUndefined();
-    expect(statusView.poll).toBe("get_run");
-    expect(statusView.pollAfterSeconds).toBe(15);
+    expect(statusView.poll).toBe("wait_agent");
+    expect(statusView.wait).toBe(15);
 
     let done = getRun(started.runId);
     for (let i = 0; i < 50 && done?.status === "running"; i++) {

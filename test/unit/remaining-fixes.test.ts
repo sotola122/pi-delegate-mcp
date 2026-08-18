@@ -31,7 +31,6 @@ import {
 import { defaultConfig } from "../../src/config/schema.js";
 import { annotations } from "../../src/mcp/annotations.js";
 import { serializeTaskBlock, type TaskBlock } from "../../src/prompt/task-block.js";
-import { batchTaskSchemaRefine } from "../../src/mcp/tools/schemas.js";
 import { DelegateError } from "../../src/core/errors.js";
 
 describe("assetsRoot packaged layout", () => {
@@ -204,15 +203,12 @@ describe("git root must stay inside allowedRoots", () => {
 });
 
 describe("annotations are conservative", () => {
-  it("marks provider-using and writable tools openWorld/destructive", () => {
-    expect(annotations.verify.destructiveHint).toBe(true);
-    expect(annotations.verify.openWorldHint).toBe(true);
-    expect(annotations.manual.destructiveHint).toBe(true);
-    expect(annotations.manual.openWorldHint).toBe(true);
-    expect(annotations.batch.destructiveHint).toBe(true);
-    expect(annotations.batch.openWorldHint).toBe(true);
-    expect(annotations.review.openWorldHint).toBe(true);
-    expect(annotations.implement.openWorldHint).toBe(true);
+  it("marks spawn/send as openWorld/destructive", () => {
+    expect(annotations.spawn.destructiveHint).toBe(true);
+    expect(annotations.spawn.openWorldHint).toBe(true);
+    expect(annotations.send.destructiveHint).toBe(true);
+    expect(annotations.interrupt.destructiveHint).toBe(true);
+    expect(annotations.wait.readOnlyHint).toBe(true);
   });
 });
 
@@ -229,32 +225,19 @@ describe("focus appears in task block", () => {
   });
 });
 
-describe("batch task profile contracts", () => {
-  it("requires acceptanceChecks for verify and inScope+checks for implement", () => {
-    expect(() =>
-      batchTaskSchemaRefine({
-        roleId: "v",
-        profile: "verify",
-        objective: "o",
-      }),
-    ).toThrow(/acceptanceChecks/);
-    expect(() =>
-      batchTaskSchemaRefine({
-        roleId: "i",
-        profile: "implement",
-        objective: "o",
-        acceptanceChecks: ["a"],
-      }),
-    ).toThrow(/inScope/);
-    expect(() =>
-      batchTaskSchemaRefine({
-        roleId: "i",
-        profile: "implement",
-        objective: "o",
-        inScope: ["src"],
-        acceptanceChecks: ["a"],
-      }),
-    ).not.toThrow();
+describe("MCP agent tool schemas", () => {
+  it("exposes spawn/wait/list/read/send/interrupt inputs", async () => {
+    const schemas = await import("../../src/mcp/tools/schemas.js");
+    expect(Object.keys(schemas.spawnAgentInputSchema)).toEqual(
+      expect.arrayContaining(["task_name", "message"]),
+    );
+    expect(
+      Object.keys(schemas.spawnAgentInputSchema),
+    ).not.toContain("tools");
+    expect(schemas.waitAgentInputSchema.targets).toBeDefined();
+    expect(schemas.readAgentResponseInputSchema.target).toBeDefined();
+    expect(schemas.sendMessageInputSchema.message).toBeDefined();
+    expect(schemas.interruptAgentInputSchema.target).toBeDefined();
   });
 });
 
@@ -307,7 +290,7 @@ describe("pipelineExecCwd preserves nested relative path", () => {
         result: {
           runId: randomUUID(),
           status: "success" as const,
-          profile: "implement" as const,
+          agentType: "implement",
           provider: "p",
           model: "m",
           thinking: "medium",

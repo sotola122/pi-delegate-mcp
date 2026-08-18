@@ -8,7 +8,7 @@ import {
 import { mapProfileToSdkTools } from "../../src/pi-sdk/profile-mapper.js";
 import { evaluateToolCall } from "../../src/pi-sdk/policy-extension.js";
 import { buildSanitizedShellEnvironment } from "../../src/pi-sdk/environment.js";
-import { assemblePrompt } from "../../src/prompt/assembler.js";
+import { assembleChildPrompt } from "../../src/prompt/child.js";
 import { serializeTaskBlock } from "../../src/prompt/task-block.js";
 import { redactSecrets } from "../../src/artifacts/redact.js";
 import { deepMerge } from "../../src/config/merge.js";
@@ -128,7 +128,7 @@ describe("sdk profile mapping", () => {
 describe("policy extension", () => {
   it("blocks review bash", () => {
     const d = evaluateToolCall(
-      { profile: "review" },
+      { tools: ["read", "grep", "find", "ls"] },
       { name: "bash", input: { command: "ls" } },
     );
     expect(d.kind).toBe("deny");
@@ -136,7 +136,7 @@ describe("policy extension", () => {
 
   it("blocks git commit", () => {
     const d = evaluateToolCall(
-      { profile: "implement", workspace: "/tmp/ws" },
+      { tools: ["read", "grep", "find", "ls", "edit", "write", "bash"], workspace: "/tmp/ws" },
       { name: "bash", input: { command: "git commit -am x" } },
     );
     expect(d.kind).toBe("deny");
@@ -144,7 +144,7 @@ describe("policy extension", () => {
 
   it("allows review read", () => {
     const d = evaluateToolCall(
-      { profile: "review", workspace: "/tmp/ws" },
+      { tools: ["read", "grep", "find", "ls"], workspace: "/tmp/ws" },
       { name: "read", input: { path: "/tmp/ws/a.ts" } },
     );
     expect(d.kind).toBe("allow");
@@ -168,42 +168,23 @@ describe("shell environment", () => {
 });
 
 describe("prompt assembly", () => {
-  it("includes safety envelope and review heading contract", () => {
-    const prompt = assemblePrompt({
-      profile: "review",
-      task: { objective: "review foo", profile: "review" },
+  it("includes safety envelope without role headings", () => {
+    const prompt = assembleChildPrompt({
+      message: "review foo",
     });
     expect(prompt).toMatch(/Do not run `git commit`/);
-    expect(prompt).toMatch(/# Review Result/);
-    expect(prompt).toMatch(/objective:/);
+    expect(prompt).toContain("review foo");
+    expect(prompt).not.toMatch(/# Review Result/);
   });
 
-  it("manual replace keeps safety and drops base profile prompt body", () => {
-    const prompt = assemblePrompt({
-      profile: "review",
-      promptMode: "replace",
-      manualPrompt: "Custom criteria only.",
-      task: { objective: "x", profile: "review" },
-    });
-    expect(prompt).toMatch(/untrusted data/i);
-    expect(prompt).toContain("Custom criteria only.");
-  });
-
-  it("resume keeps lenses, modalities, and manual while omitting safety and profile bodies", () => {
-    const prompt = assemblePrompt({
-      profile: "review",
+  it("resume omits safety", () => {
+    const prompt = assembleChildPrompt({
       resume: true,
-      lenses: ["adversarial"],
-      modalities: ["vision"],
-      manualPrompt: "Follow-up: check the race.",
-      task: { objective: "follow up", profile: "review" },
+      developerInstructions: "Follow-up: check the race.",
+      message: "follow up",
     });
     expect(prompt).not.toMatch(/Do not run `git commit`/);
-    expect(prompt).not.toMatch(/independent second opinion/);
-    expect(prompt).toMatch(/Adversarial lens/);
     expect(prompt).toMatch(/Follow-up: check the race/);
-    expect(prompt).toMatch(/# Review Result/);
-    expect(prompt).toMatch(/objective:/);
   });
 
   it("task block serializes without injection via yaml", () => {
@@ -261,20 +242,14 @@ describe("config", () => {
     expect(JSON.parse(stripJsonc(raw))).toEqual({ version: 1 });
   });
 
-  it("defaults to version 2", () => {
-    expect(defaultConfig().version).toBe(2);
+  it("defaults to version 3", () => {
+    expect(defaultConfig().version).toBe(3);
     expect(defaultConfig().sdk.writableToolExecution).toBe("sequential");
     expect(defaultConfig().sessions.enabled).toBe(true);
   });
 
-  it("defaults delegated run timeout to 3 hours per profile", () => {
-    const timeouts = defaultConfig().limits.timeoutSeconds;
-    expect(timeouts).toEqual({
-      review: 10800,
-      verify: 10800,
-      implement: 10800,
-      "no-tools": 10800,
-    });
+  it("defaults delegated run timeout to 3 hours", () => {
+    expect(defaultConfig().limits.timeoutSeconds).toBe(10800);
   });
 
   it("migrates v1 config", () => {
@@ -289,7 +264,7 @@ describe("config", () => {
       environment: { passThrough: ["IDF_PATH"] },
     });
     const parsed = ConfigSchema.parse(migrated);
-    expect(parsed.version).toBe(2);
+    expect(parsed.version).toBe(3);
     expect(parsed.shellEnvironment.passThrough).toContain("IDF_PATH");
   });
 
@@ -365,9 +340,7 @@ describe("result validation", () => {
       finalizeStatusFromOutcome({
         completion: "completed",
         output: "# Review Result\nok",
-        profile: "review",
         acceptance: [],
-        requireHeading: true,
         agentStarted: true,
         agentEnded: true,
       }),

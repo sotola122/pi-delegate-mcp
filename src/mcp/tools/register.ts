@@ -1,35 +1,25 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { AppConfig, ProfileName } from "../../config/schema.js";
-import {
-  startRun,
-  startSmoke,
-  getRun,
-  cancelRun,
-  runToPublic,
-  startedRunPublic,
-} from "../../core/run-registry.js";
-import {
-  startBatch,
-  getBatch,
-  cancelBatch,
-  batchToPublic,
-  type BatchTaskSpec,
-} from "../../core/batch.js";
+import type { AppConfig } from "../../config/schema.js";
+import { DelegateError } from "../../core/errors.js";
 import { annotations } from "../annotations.js";
 import { jsonToMcpContent, errorToMcpContent } from "../adapter.js";
 import {
-  reviewInputSchema,
-  verifyInputSchema,
-  implementInputSchema,
-  judgeInputSchema,
-  manualInputSchema,
-  smokeInputSchema,
-  getRunInputSchema,
-  cancelRunInputSchema,
-  getBatchInputSchema,
-  cancelBatchInputSchema,
-  batchInputSchema,
-  rolesInputSchema,
+  spawnAgent,
+  waitAgent,
+  waitAllAgents,
+  listAgentsPublic,
+  readAgentResponse,
+  sendMessage,
+  interruptAgent,
+} from "../../core/agent-registry.js";
+import {
+  spawnAgentInputSchema,
+  waitAgentInputSchema,
+  waitAllAgentsInputSchema,
+  listAgentsInputSchema,
+  readAgentResponseInputSchema,
+  sendMessageInputSchema,
+  interruptAgentInputSchema,
 } from "./schemas.js";
 
 export interface ToolContext {
@@ -37,415 +27,179 @@ export interface ToolContext {
   getRoots: () => string[];
 }
 
-const POLL_CONTRACT =
-  "Async: returns runId + pollAfterSeconds. Wait that many seconds, then call get_run with view=status until status is terminal; finally get_run with view=full for the result. Do not busy-poll.";
-const SESSION_HINT =
-  "Same-role follow-ups should pass the returned sessionId to reuse the Pi conversation cache.";
-
-function hasWritable(roles: Array<{ profile: ProfileName }>): boolean {
-  return roles.some((r) => r.profile === "verify" || r.profile === "implement");
-}
-
 export function registerAllTools(server: McpServer, ctx: ToolContext): void {
   server.registerTool(
-    "delegate_review",
+    "spawn_agent",
     {
-      title: "Delegate Review",
-      description: `Start a read-only review (async). ${POLL_CONTRACT} ${SESSION_HINT} Perspectives return batchId; poll with get_batch.`,
-      inputSchema: reviewInputSchema,
-      annotations: annotations.review,
-    },
-    async (args) => {
-      try {
-        const roots = ctx.getRoots();
-        if (args.perspectives?.length) {
-          const tasks: BatchTaskSpec[] = args.perspectives.map((p) => ({
-            roleId: p.roleId,
-            profile: "review",
-            objective: p.objective ?? `${args.objective} [${p.roleId}]`,
-            reviewKind: args.reviewKind,
-            baseline: args.baseline,
-            inScope: args.inScope,
-            outOfScope: args.outOfScope,
-            acceptanceChecks: args.acceptanceChecks,
-            lenses: p.lenses ?? args.lenses,
-            focus: p.focus ?? args.focus,
-            effort: p.effort ?? args.effort,
-            model: p.model ?? args.model,
-            attachments: args.attachments,
-            childSkills: args.childSkills,
-            timeoutSeconds: args.timeoutSeconds,
-            sessionId: p.sessionId,
-          }));
-          const batch = startBatch({
-            config: ctx.config,
-            workspace: args.workspace,
-            mcpRoots: roots,
-            execution: "parallel",
-            tasks,
-          });
-          return jsonToMcpContent(batch);
-        }
-
-        const started = startRun({
-          config: ctx.config,
-          request: {
-            profile: "review",
-            objective: args.objective,
-            workspace: args.workspace,
-            mcpRoots: roots,
-            reviewKind: args.reviewKind,
-            baseline: args.baseline,
-            inScope: args.inScope,
-            outOfScope: args.outOfScope,
-            acceptanceChecks: args.acceptanceChecks,
-            lenses: args.lenses,
-            focus: args.focus,
-            effort: args.effort,
-            model: args.model,
-            attachments: args.attachments,
-            childSkills: args.childSkills,
-            timeoutSeconds: args.timeoutSeconds,
-            sessionId: args.sessionId,
-          },
-        });
-        return jsonToMcpContent(startedRunPublic(started.runId, started.sessionId));
-      } catch (err) {
-        return errorToMcpContent(err);
-      }
-    },
-  );
-
-  server.registerTool(
-    "delegate_verify",
-    {
-      title: "Delegate Verify",
-      description: `Start verification (async). ${POLL_CONTRACT} ${SESSION_HINT}`,
-      inputSchema: verifyInputSchema,
-      annotations: annotations.verify,
-    },
-    async (args) => {
-      try {
-        const started = startRun({
-          config: ctx.config,
-          request: {
-            profile: "verify",
-            objective: args.objective,
-            workspace: args.workspace,
-            mcpRoots: ctx.getRoots(),
-            inScope: args.inScope,
-            outOfScope: args.outOfScope,
-            acceptanceChecks: args.acceptanceChecks,
-            suggestedChecks: args.suggestedChecks,
-            effort: args.effort,
-            model: args.model,
-            attachments: args.attachments,
-            childSkills: args.childSkills,
-            workspaceMode: args.workspaceMode,
-            timeoutSeconds: args.timeoutSeconds,
-            sessionId: args.sessionId,
-          },
-        });
-        return jsonToMcpContent(startedRunPublic(started.runId, started.sessionId));
-      } catch (err) {
-        return errorToMcpContent(err);
-      }
-    },
-  );
-
-  server.registerTool(
-    "delegate_implement",
-    {
-      title: "Delegate Implement",
-      description: `Start implement in a worktree (async). Default delivery is patch. ${POLL_CONTRACT} ${SESSION_HINT}`,
-      inputSchema: implementInputSchema,
-      annotations: annotations.implement,
-    },
-    async (args) => {
-      try {
-        const started = startRun({
-          config: ctx.config,
-          request: {
-            profile: "implement",
-            objective: args.objective,
-            workspace: args.workspace,
-            mcpRoots: ctx.getRoots(),
-            inScope: args.inScope,
-            outOfScope: args.outOfScope,
-            acceptanceChecks: args.acceptanceChecks,
-            effort: args.effort,
-            model: args.model,
-            attachments: args.attachments,
-            childSkills: args.childSkills,
-            delivery: args.delivery,
-            timeoutSeconds: args.timeoutSeconds,
-            sessionId: args.sessionId,
-          },
-        });
-        return jsonToMcpContent(startedRunPublic(started.runId, started.sessionId));
-      } catch (err) {
-        return errorToMcpContent(err);
-      }
-    },
-  );
-
-  server.registerTool(
-    "delegate_judge",
-    {
-      title: "Delegate Judge",
-      description: `Start a no-tools judgment (async). ${POLL_CONTRACT} ${SESSION_HINT}`,
-      inputSchema: judgeInputSchema,
-      annotations: annotations.judge,
-    },
-    async (args) => {
-      try {
-        const objective = args.suppliedMaterial
-          ? `${args.objective}\n\n---\nSupplied material:\n${args.suppliedMaterial}`
-          : args.objective;
-        const started = startRun({
-          config: ctx.config,
-          request: {
-            profile: "no-tools",
-            objective,
-            attachments: args.attachments,
-            acceptanceChecks: args.acceptanceChecks,
-            lenses: args.lenses,
-            effort: args.effort,
-            model: args.model,
-            timeoutSeconds: args.timeoutSeconds,
-            sessionId: args.sessionId,
-          },
-        });
-        return jsonToMcpContent(startedRunPublic(started.runId, started.sessionId));
-      } catch (err) {
-        return errorToMcpContent(err);
-      }
-    },
-  );
-
-  server.registerTool(
-    "delegate_manual",
-    {
-      title: "Delegate Manual",
-      description: `Start a manual-prompt delegation under a fixed profile (async). ${POLL_CONTRACT} ${SESSION_HINT}`,
-      inputSchema: manualInputSchema,
-      annotations: annotations.manual,
-    },
-    async (args) => {
-      try {
-        const started = startRun({
-          config: ctx.config,
-          request: {
-            profile: args.profile,
-            objective: args.objective,
-            workspace: args.workspace,
-            mcpRoots: args.profile === "no-tools" ? undefined : ctx.getRoots(),
-            inScope: args.inScope,
-            outOfScope: args.outOfScope,
-            acceptanceChecks: args.acceptanceChecks,
-            effort: args.effort,
-            model: args.model,
-            attachments: args.attachments,
-            childSkills: args.childSkills,
-            delivery: args.delivery,
-            manualPrompt: args.prompt,
-            promptMode: args.promptMode ?? "append",
-            timeoutSeconds: args.timeoutSeconds,
-            sessionId: args.sessionId,
-          },
-        });
-        return jsonToMcpContent(startedRunPublic(started.runId, started.sessionId));
-      } catch (err) {
-        return errorToMcpContent(err);
-      }
-    },
-  );
-
-  server.registerTool(
-    "delegate_batch",
-    {
-      title: "Delegate Batch",
+      title: "Spawn Agent",
       description:
-        "Start multiple delegated tasks (parallel or sequential). Returns batchId; poll with get_batch.",
-      inputSchema: batchInputSchema,
-      annotations: annotations.batch,
+        "Start a Pi subagent. Returns immediately. Settings come from ~/.cursor/pi-delegate/agents/*.toml plus prompt/skills. Use wait_agent for the result.",
+      inputSchema: spawnAgentInputSchema,
+      annotations: annotations.spawn,
     },
     async (args) => {
       try {
-        const batch = startBatch({
+        const started = spawnAgent({
           config: ctx.config,
-          workspace: args.workspace,
-          mcpRoots: ctx.getRoots(),
-          execution: args.execution,
-          tasks: args.tasks,
-        });
-        return jsonToMcpContent(batch);
-      } catch (err) {
-        return errorToMcpContent(err);
-      }
-    },
-  );
-
-  server.registerTool(
-    "delegate_roles",
-    {
-      title: "Delegate Roles",
-      description:
-        "Role-based multi-delegate (e.g. implementer → verifier → parallel reviewers). Returns batchId; poll with get_batch.",
-      inputSchema: rolesInputSchema,
-      annotations: annotations.roles,
-    },
-    async (args) => {
-      try {
-        const execution =
-          args.execution ??
-          (hasWritable(args.roles) ? "sequential" : "parallel");
-        const tasks: BatchTaskSpec[] = args.roles.map((r) => ({
-          roleId: r.roleId,
-          profile: r.profile,
-          objective: r.objective ?? `${args.objective} [${r.roleId}]`,
-          reviewKind:
-            r.profile === "review" ? (args.reviewKind ?? "static-hunt") : undefined,
-          baseline: args.baseline,
-          inScope: r.inScope,
-          outOfScope: r.outOfScope,
-          acceptanceChecks: r.acceptanceChecks,
-          lenses: r.lenses,
-          focus: r.focus,
-          attachments: r.attachments,
-          childSkills: r.childSkills,
-          delivery: r.delivery,
-          workspaceMode: r.workspaceMode,
-          effort: r.effort,
-          model: r.model,
-            timeoutSeconds: r.timeoutSeconds,
-            sessionId: r.sessionId,
-          }));
-        const batch = startBatch({
-          config: ctx.config,
-          workspace: args.workspace,
-          mcpRoots: ctx.getRoots(),
-          execution,
-          tasks,
-        });
-        return jsonToMcpContent(batch);
-      } catch (err) {
-        return errorToMcpContent(err);
-      }
-    },
-  );
-
-  server.registerTool(
-    "get_run",
-    {
-      title: "Get Run",
-      description:
-        "Poll an async delegation. Prefer view=status while running (no result payload; honor pollAfterSeconds). Use view=full only after status is terminal to fetch result/output.",
-      inputSchema: getRunInputSchema,
-      annotations: annotations.getRun,
-    },
-    async (args) => {
-      try {
-        const record = getRun(args.runId);
-        if (!record) {
-          return jsonToMcpContent(
-            { status: "failed", code: "run_not_found", runId: args.runId },
-            true,
-          );
-        }
-        const view =
-          args.view ??
-          (record.status === "running" || record.status === "queued"
-            ? "status"
-            : "full");
-        return jsonToMcpContent(runToPublic(record, view));
-      } catch (err) {
-        return errorToMcpContent(err);
-      }
-    },
-  );
-
-  server.registerTool(
-    "cancel_run",
-    {
-      title: "Cancel Run",
-      description: "Cancel a running async delegation.",
-      inputSchema: cancelRunInputSchema,
-      annotations: annotations.cancelRun,
-    },
-    async (args) => {
-      try {
-        return jsonToMcpContent(runToPublic(cancelRun(args.runId)));
-      } catch (err) {
-        return errorToMcpContent(err);
-      }
-    },
-  );
-
-  server.registerTool(
-    "get_batch",
-    {
-      title: "Get Batch",
-      description: "Poll status/results of a multi-task batch.",
-      inputSchema: getBatchInputSchema,
-      annotations: annotations.getRun,
-    },
-    async (args) => {
-      try {
-        const batch = getBatch(args.batchId);
-        if (!batch) {
-          return jsonToMcpContent(
-            { status: "failed", code: "batch_not_found", batchId: args.batchId },
-            true,
-          );
-        }
-        return jsonToMcpContent(batchToPublic(batch));
-      } catch (err) {
-        return errorToMcpContent(err);
-      }
-    },
-  );
-
-  server.registerTool(
-    "cancel_batch",
-    {
-      title: "Cancel Batch",
-      description: "Cancel all runs in a batch.",
-      inputSchema: cancelBatchInputSchema,
-      annotations: annotations.cancelRun,
-    },
-    async (args) => {
-      try {
-        const batch = cancelBatch(args.batchId);
-        return jsonToMcpContent(batchToPublic(batch));
-      } catch (err) {
-        return errorToMcpContent(err);
-      }
-    },
-  );
-
-  server.registerTool(
-    "smoke_test",
-    {
-      title: "Smoke Test",
-      description: `Start an SDK connectivity check (stdout OK). ${POLL_CONTRACT}`,
-      inputSchema: smokeInputSchema,
-      annotations: annotations.smoke,
-    },
-    async (args) => {
-      try {
-        const started = startSmoke({
-          config: ctx.config,
-          mode: args.mode,
-          profile: args.profile,
-          effort: args.effort,
+          taskName: args.task_name,
+          message: args.message,
+          prompt: args.prompt,
+          skills: args.skills,
+          agentType: args.agent_type,
           model: args.model,
-          timeoutSeconds: args.timeoutSeconds,
+          provider: args.provider,
+          effort: args.effort,
+          workspace: args.workspace,
+          mcpRoots: ctx.getRoots(),
         });
-        return jsonToMcpContent(startedRunPublic(started.runId));
+        return jsonToMcpContent(started);
+      } catch (err) {
+        return errorToMcpContent(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "wait_agent",
+    {
+      title: "Wait Agent",
+      description:
+        "Wait briefly for one agent. If still running, returns status and wait seconds.",
+      inputSchema: waitAgentInputSchema,
+      annotations: annotations.wait,
+    },
+    async (args) => {
+      try {
+        return jsonToMcpContent(
+          await waitAgent({
+            config: ctx.config,
+            mcpRoots: ctx.getRoots(),
+            targets: args.targets,
+          }),
+        );
+      } catch (err) {
+        return errorToMcpContent(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "wait_all_agents",
+    {
+      title: "Wait All Agents",
+      description:
+        "Wait briefly until targeted agents finish. If still running, returns status and wait seconds.",
+      inputSchema: waitAllAgentsInputSchema,
+      annotations: annotations.wait,
+    },
+    async (args) => {
+      try {
+        return jsonToMcpContent(
+          await waitAllAgents({
+            config: ctx.config,
+            mcpRoots: ctx.getRoots(),
+            targets: args.targets,
+          }),
+        );
+      } catch (err) {
+        return errorToMcpContent(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "list_agents",
+    {
+      title: "List Agents",
+      description: "List agents in the current workspace.",
+      inputSchema: listAgentsInputSchema,
+      annotations: annotations.list,
+    },
+    async (args) => {
+      try {
+        return jsonToMcpContent(
+          listAgentsPublic({
+            config: ctx.config,
+            mcpRoots: ctx.getRoots(),
+            pathPrefix: args.path_prefix,
+          }),
+        );
+      } catch (err) {
+        return errorToMcpContent(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "read_agent_response",
+    {
+      title: "Read Agent Response",
+      description: "Read one agent's latest final text.",
+      inputSchema: readAgentResponseInputSchema,
+      annotations: annotations.list,
+    },
+    async (args) => {
+      try {
+        return jsonToMcpContent(
+          readAgentResponse({
+            target: args.target,
+            config: ctx.config,
+            mcpRoots: ctx.getRoots(),
+          }),
+        );
+      } catch (err) {
+        return errorToMcpContent(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "send_message",
+    {
+      title: "Send Message",
+      description:
+        "Steer a running agent (queued next turn) or start another turn when settled.",
+      inputSchema: sendMessageInputSchema,
+      annotations: annotations.send,
+    },
+    async (args) => {
+      try {
+        return jsonToMcpContent(
+          sendMessage({
+            config: ctx.config,
+            target: args.target,
+            message: args.message,
+            mcpRoots: ctx.getRoots(),
+          }),
+        );
+      } catch (err) {
+        return errorToMcpContent(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "interrupt_agent",
+    {
+      title: "Interrupt Agent",
+      description: "Abort the current turn. The session remains for send_message.",
+      inputSchema: interruptAgentInputSchema,
+      annotations: annotations.interrupt,
+    },
+    async (args) => {
+      try {
+        return jsonToMcpContent(
+          await interruptAgent({
+            config: ctx.config,
+            target: args.target,
+            mcpRoots: ctx.getRoots(),
+          }),
+        );
       } catch (err) {
         return errorToMcpContent(err);
       }
     },
   );
 }
+
+export { DelegateError };

@@ -37,21 +37,42 @@ describe("fake pi executor", () => {
     config.workspace.allowedRoots = [root];
 
     const result = await runDelegation({
-      profile: "review",
-      objective: "review the repo",
+      taskName: "reviewer",
+      message: "review the repo",
       workspace: root,
+      tools: ["read", "grep", "find", "ls"],
+      noTools: false,
+      provider: "openai-codex",
+      model: "gpt-5.6-sol",
+      thinking: "high",
       config,
-      reviewKind: "static-hunt",
     });
 
     expect(result.status).toBe("success");
-    expect(result.output).toContain("# Review Result");
+    expect(result.output).toContain("looks fine");
     expect(result.attempts[0]?.backend).toBe("fake");
     expect(result.sessionId).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
     );
 
     rmSync(root, { recursive: true, force: true });
+  });
+
+  it("rejects childSkills that are not skill packages", async () => {
+    const config = defaultConfig();
+    await expect(
+      runDelegation({
+        taskName: "bad-skill",
+        message: "nope",
+        tools: [],
+        noTools: true,
+        provider: "openai-codex",
+        model: "gpt-5.6-sol",
+        thinking: "high",
+        childSkills: ["/etc/passwd"],
+        config,
+      }),
+    ).rejects.toThrow(/SKILL\.md|not found|regular file/);
   });
 
   it("sanitizes shell env", () => {

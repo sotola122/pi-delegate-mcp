@@ -11,7 +11,7 @@ import {
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import type { AppConfig, ProfileName } from "../config/schema.js";
+import type { AppConfig } from "../config/schema.js";
 import { DelegateError } from "../core/errors.js";
 import { assertSafeSessionId } from "../core/ids.js";
 import { isPathInside, resolveRealPath } from "../workspace/roots.js";
@@ -26,7 +26,8 @@ export type SessionHandle =
 export interface SessionMeta {
   sessionId: string;
   jsonlBasename: string;
-  profile: ProfileName;
+  taskName: string;
+  agentType?: string;
   provider: string;
   model: string;
   destinationWorkspace: string;
@@ -43,7 +44,7 @@ export interface SessionLock {
 }
 
 export interface SessionIdentity {
-  profile: ProfileName;
+  taskName: string;
   provider: string;
   model: string;
 }
@@ -285,7 +286,7 @@ export function createPersistedSession(opts: {
   const meta: SessionMeta = {
     sessionId,
     jsonlBasename,
-    profile: opts.identity.profile,
+    taskName: opts.identity.taskName,
     provider: opts.identity.provider,
     model: opts.identity.model,
     destinationWorkspace: resolveRealPath(opts.workspace),
@@ -318,12 +319,12 @@ export function openPersistedSession(opts: {
   }
   const meta = readSessionMeta(sessionDir);
   if (
-    meta.profile !== opts.expected.profile ||
+    meta.taskName !== opts.expected.taskName ||
     meta.provider !== opts.expected.provider ||
     meta.model !== opts.expected.model
   ) {
     throw new DelegateError(
-      `Session mismatch: stored ${meta.profile}/${meta.provider}/${meta.model} vs requested ${opts.expected.profile}/${opts.expected.provider}/${opts.expected.model}`,
+      `Session mismatch: stored ${meta.taskName}/${meta.provider}/${meta.model} vs requested ${opts.expected.taskName}/${opts.expected.provider}/${opts.expected.model}`,
       "session_mismatch",
       true,
     );

@@ -1,12 +1,12 @@
-import type { AppConfig, AllowedModel, Effort, ProfileName } from "../config/schema.js";
+import type { AppConfig } from "../config/schema.js";
 import { DelegateError } from "./errors.js";
-import { resolveProvider } from "./provider.js";
 import { resolveWorkspace } from "../workspace/roots.js";
 import {
   createPersistedSession,
   MEMORY_SESSION,
   openPersistedSession,
   sessionsEnabled,
+  writeSessionMeta,
   type SessionHandle,
   type SessionLock,
   type SessionMeta,
@@ -21,20 +21,18 @@ export interface PreparedSession {
 
 export function prepareRunSession(opts: {
   config: AppConfig;
-  profile: ProfileName;
+  taskName: string;
+  provider: string;
+  model: string;
   workspace?: string;
   destinationWorkspace?: string;
   mcpRoots?: string[];
   sessionId?: string;
-  effort?: Effort;
-  model?: AllowedModel;
-  runId?: string;
   persist?: boolean;
-  imageInputPlanned?: boolean;
-  useImplementAlternate?: boolean;
+  runId?: string;
+  agentType?: string;
 }): PreparedSession {
-  const persist =
-    (opts.persist ?? true) && sessionsEnabled(opts.config);
+  const persist = (opts.persist ?? true) && sessionsEnabled(opts.config);
   if (!persist) {
     if (opts.sessionId) {
       throw new DelegateError(
@@ -69,18 +67,10 @@ export function prepareRunSession(opts: {
     }
   }
 
-  const resolved = resolveProvider({
-    config: opts.config,
-    profile: opts.profile,
-    effort: opts.effort,
-    model: opts.model,
-    imageInputPlanned: opts.imageInputPlanned,
-    useImplementAlternate: opts.useImplementAlternate,
-  });
   const identity = {
-    profile: opts.profile,
-    provider: resolved.provider,
-    model: resolved.model,
+    taskName: opts.taskName,
+    provider: opts.provider,
+    model: opts.model,
   };
 
   if (opts.sessionId) {
@@ -103,6 +93,10 @@ export function prepareRunSession(opts: {
     identity,
     lastRunId: opts.runId,
   });
+  if (opts.agentType) {
+    created.meta.agentType = opts.agentType;
+    writeSessionMeta(created.handle.sessionDir, created.meta);
+  }
   return {
     handle: created.handle,
     lock: created.lock,

@@ -11,7 +11,7 @@ import { createRunDirs, saveResultJson, writeArtifact } from "../artifacts/manag
 import { runsDir } from "../config/paths.js";
 import { DelegateError } from "./errors.js";
 import { assertSafeRunId } from "./ids.js";
-import { POLL_HINT, pollAfterSeconds, startedRunPublic } from "./poll.js";
+import { pollAfterSeconds, startedRunPublic } from "./poll.js";
 import type { RunProgress } from "./progress.js";
 import { resolveProvider } from "./provider.js";
 import { runSmokeTest } from "../pi-sdk/smoke.js";
@@ -146,16 +146,15 @@ export function startRun(opts: {
         }
       : prepareRunSession({
           config: opts.config,
-          profile: opts.request.profile,
+          taskName: opts.request.taskName,
+          provider: opts.request.provider,
+          model: opts.request.model,
           workspace: opts.request.workspace,
           destinationWorkspace: opts.request.destinationWorkspace,
           mcpRoots: opts.request.mcpRoots,
           sessionId: opts.request.sessionId,
-          effort: opts.request.effort,
-          model: opts.request.model,
           runId,
-          imageInputPlanned: opts.request.imageInputPlanned,
-          useImplementAlternate: opts.request.useImplementAlternate,
+          agentType: opts.request.agentType,
         });
   const dirs = createRunDirs(runId);
   const sessionId =
@@ -297,7 +296,7 @@ export function startSmoke(opts: {
           : smoke.ok
             ? "success"
             : "failed",
-        profile: "no-tools",
+        taskName: "smoke",
         provider: smoke.provider,
         model: smoke.model,
         thinking: smoke.thinking,
@@ -425,12 +424,12 @@ export function runToPublic(
     elapsedMs,
     progress: record.progress,
     error: record.error,
-    poll: "get_run",
-    pollAfterSeconds: pollAfterSeconds(record.status, elapsedMs),
+    poll: "wait_agent",
+    wait: pollAfterSeconds(record.status, elapsedMs),
   };
   if (record.sessionId) base.sessionId = record.sessionId;
   if (!terminal) {
-    base.hint = POLL_HINT;
+    base.wait = pollAfterSeconds(record.status, elapsedMs);
   }
   if (view === "status") {
     return base;

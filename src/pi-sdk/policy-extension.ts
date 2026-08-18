@@ -186,21 +186,15 @@ export function evaluateToolCall(
   const name = call.name;
   const input = asRecord(call.input);
 
-  if (policy.profile === "no-tools") {
-    return { kind: "deny", reason: "no-tools profile forbids all tools" };
+  if (policy.noTools) {
+    return { kind: "deny", reason: "no-tools forbids all tools" };
   }
 
-  if (policy.profile === "review" && MUTATING.has(name)) {
+  const allowed = new Set(policy.tools ?? []);
+  if (allowed.size > 0 && !allowed.has(name)) {
     return {
       kind: "deny",
-      reason: `review profile forbids tool: ${name}`,
-    };
-  }
-
-  if (policy.profile === "verify" && WRITE_TOOLS.has(name)) {
-    return {
-      kind: "deny",
-      reason: `verify profile forbids tool: ${name}`,
+      reason: `tool not in allowlist: ${name}`,
     };
   }
 
