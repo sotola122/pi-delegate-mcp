@@ -24,30 +24,23 @@ export async function startMcpServer(): Promise<void> {
   });
 
   let roots: string[] = [];
-  const getRoots = () => roots;
+  async function getRoots(): Promise<string[]> {
+    try {
+      const result = await server.server.listRoots();
+      if (result.roots.length) {
+        roots = result.roots.map((r) => uriToPath(r.uri)).filter(Boolean);
+      }
+    } catch {
+      // Cursor may omit the roots capability. resolveWorkspace then uses cwd.
+    }
+    return roots;
+  }
 
   registerAllTools(server, { config, getRoots });
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-
-  try {
-    const client = server.server;
-    const caps = client.getClientCapabilities?.();
-    if (caps?.roots) {
-      // listRoots available on Client; on server side use request if present
-      const result = await (
-        client as unknown as {
-          listRoots?: () => Promise<{ roots: Array<{ uri: string }> }>;
-        }
-      ).listRoots?.();
-      if (result?.roots) {
-        roots = result.roots.map((r) => uriToPath(r.uri)).filter(Boolean);
-      }
-    }
-  } catch {
-    // Roots are optional; tools can require explicit workspace
-  }
+  await getRoots();
 
   console.error("pi-delegate-mcp: listening on stdio");
 }

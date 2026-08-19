@@ -15,25 +15,31 @@ export const spawnAgentInputSchema = {
 
 export const waitAgentInputSchema = {
   targets: z.array(z.string()).optional(),
+  workspace: z.string().optional(),
 };
 
 export const waitAllAgentsInputSchema = {
   targets: z.array(z.string()).optional(),
+  workspace: z.string().optional(),
 };
 
 export const listAgentsInputSchema = {
   path_prefix: z.string().optional(),
+  workspace: z.string().optional(),
 };
 
 export const readAgentResponseInputSchema = {
   target: z.string(),
+  workspace: z.string().optional(),
 };
 
 export const sendMessageInputSchema = {
   target: z.string(),
   message: z.string(),
+  workspace: z.string().optional(),
 };
 
 export const interruptAgentInputSchema = {
   target: z.string(),
+  workspace: z.string().optional(),
 };

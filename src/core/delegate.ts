@@ -296,7 +296,7 @@ export async function runDelegation(
       artifacts.push({ kind: "result", path: resultPath });
       const result: DelegateResult = {
         runId: dirs.runId,
-        status: "incomplete",
+        status: "failed",
         agentType: req.agentType,
         taskName: req.taskName,
         provider: req.provider,

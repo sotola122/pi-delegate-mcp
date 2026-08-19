@@ -24,7 +24,11 @@ import {
 
 export interface ToolContext {
   config: AppConfig;
-  getRoots: () => string[];
+  getRoots: () => string[] | Promise<string[]>;
+}
+
+async function mcpRoots(ctx: ToolContext): Promise<string[]> {
+  return Promise.resolve(ctx.getRoots());
 }
 
 export function registerAllTools(server: McpServer, ctx: ToolContext): void {
@@ -50,7 +54,7 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
           provider: args.provider,
           effort: args.effort,
           workspace: args.workspace,
-          mcpRoots: ctx.getRoots(),
+          mcpRoots: await mcpRoots(ctx),
         });
         return jsonToMcpContent(started);
       } catch (err) {
@@ -73,7 +77,8 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
         return jsonToMcpContent(
           await waitAgent({
             config: ctx.config,
-            mcpRoots: ctx.getRoots(),
+            workspace: args.workspace,
+            mcpRoots: await mcpRoots(ctx),
             targets: args.targets,
           }),
         );
@@ -97,7 +102,8 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
         return jsonToMcpContent(
           await waitAllAgents({
             config: ctx.config,
-            mcpRoots: ctx.getRoots(),
+            workspace: args.workspace,
+            mcpRoots: await mcpRoots(ctx),
             targets: args.targets,
           }),
         );
@@ -120,7 +126,8 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
         return jsonToMcpContent(
           listAgentsPublic({
             config: ctx.config,
-            mcpRoots: ctx.getRoots(),
+            workspace: args.workspace,
+            mcpRoots: await mcpRoots(ctx),
             pathPrefix: args.path_prefix,
           }),
         );
@@ -143,8 +150,9 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
         return jsonToMcpContent(
           readAgentResponse({
             target: args.target,
+            workspace: args.workspace,
             config: ctx.config,
-            mcpRoots: ctx.getRoots(),
+            mcpRoots: await mcpRoots(ctx),
           }),
         );
       } catch (err) {
@@ -169,7 +177,8 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
             config: ctx.config,
             target: args.target,
             message: args.message,
-            mcpRoots: ctx.getRoots(),
+            workspace: args.workspace,
+            mcpRoots: await mcpRoots(ctx),
           }),
         );
       } catch (err) {
@@ -192,7 +201,8 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
           await interruptAgent({
             config: ctx.config,
             target: args.target,
-            mcpRoots: ctx.getRoots(),
+            workspace: args.workspace,
+            mcpRoots: await mcpRoots(ctx),
           }),
         );
       } catch (err) {

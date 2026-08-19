@@ -1,4 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { mkdirSync, mkdtempSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { resolveProvider, loadProviderFile } from "../../src/core/provider.js";
 import {
   defaultConfig,
@@ -14,8 +17,7 @@ import { redactSecrets } from "../../src/artifacts/redact.js";
 import { deepMerge } from "../../src/config/merge.js";
 import { stripJsonc } from "../../src/config/loader.js";
 import { validateManualPrompt } from "../../src/prompt/validator.js";
-import { isPathInside, resolveWorkspace } from "../../src/workspace/roots.js";
-import { DelegateError } from "../../src/core/errors.js";
+import { isPathInside, resolveRealPath, resolveWorkspace } from "../../src/workspace/roots.js";
 import {
   finalizeStatus,
   finalizeStatusFromOutcome,
@@ -212,19 +214,36 @@ describe("security helpers", () => {
     expect(isPathInside("/tmp/ws", "/tmp/ws/a")).toBe(true);
   });
 
-  it("requires workspace when no roots", () => {
-    expect(() =>
-      resolveWorkspace({ config: defaultConfig(), mcpRoots: [] }),
-    ).toThrow(DelegateError);
+  it("defaults to cwd when workspace and roots are omitted", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pi-ws-cwd-"));
+    expect(
+      resolveWorkspace({ config: defaultConfig(), mcpRoots: [], cwd: dir }),
+    ).toBe(resolveRealPath(dir));
   });
 
-  it("requires explicit workspace when multiple roots", () => {
-    expect(() =>
+  it("uses the single MCP root when workspace is omitted", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pi-ws-one-"));
+    expect(
       resolveWorkspace({
         config: defaultConfig(),
-        mcpRoots: ["/a", "/b"],
+        mcpRoots: [dir],
+        cwd: mkdtempSync(join(tmpdir(), "pi-ws-other-")),
       }),
-    ).toThrow(/Multiple workspace/);
+    ).toBe(resolveRealPath(dir));
+  });
+
+  it("picks the MCP root that contains cwd when several are given", () => {
+    const a = mkdtempSync(join(tmpdir(), "pi-ws-a-"));
+    const nested = join(a, "nested");
+    mkdirSync(nested);
+    const b = mkdtempSync(join(tmpdir(), "pi-ws-b-"));
+    expect(
+      resolveWorkspace({
+        config: defaultConfig(),
+        mcpRoots: [a, b],
+        cwd: nested,
+      }),
+    ).toBe(resolveRealPath(a));
   });
 });
 

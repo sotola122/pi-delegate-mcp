@@ -195,14 +195,22 @@ export function startRun(opts: {
       });
       record.result = result;
       if (result.sessionId) record.sessionId = result.sessionId;
+      if (result.code) {
+        record.error = {
+          code: result.code,
+          message: result.message ?? result.code,
+        };
+      }
       record.status =
         result.status === "success"
           ? "success"
           : result.status === "cancelled"
             ? "cancelled"
-            : result.status === "incomplete"
-              ? "incomplete"
-              : "failed";
+            : result.status === "failed" || result.code
+              ? "failed"
+              : result.status === "incomplete"
+                ? "incomplete"
+                : "failed";
       record.progress = { phase: "done", agentStarted: true };
       record.updatedAt = Date.now();
       saveResultJson(dirs, result);
@@ -211,7 +219,7 @@ export function startRun(opts: {
       if (abort.signal.aborted) {
         record.status = "cancelled";
       } else if (err instanceof DelegateError) {
-        record.status = err.infrastructure ? "failed" : "incomplete";
+        record.status = "failed";
         record.error = { code: err.code, message: err.message };
       } else {
         record.status = "failed";
@@ -364,7 +372,7 @@ export function startSmoke(opts: {
       if (abort.signal.aborted) {
         record.status = "cancelled";
       } else if (err instanceof DelegateError) {
-        record.status = err.infrastructure ? "failed" : "incomplete";
+        record.status = "failed";
         record.error = { code: err.code, message: err.message };
       } else {
         record.status = "failed";

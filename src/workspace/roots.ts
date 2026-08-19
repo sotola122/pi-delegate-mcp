@@ -36,29 +36,43 @@ export function trustedAttachmentRoots(): string[] {
   ];
 }
 
+/**
+ * When the caller omits `workspace`, use the MCP client root from this call.
+ * One root → that path. Several → the root containing `cwd` (longest match),
+ * else the first root. No roots → `cwd` (Cursor starts the server in the project).
+ */
+export function defaultWorkspaceFromCall(opts: {
+  mcpRoots?: string[];
+  cwd?: string;
+}): string {
+  const cwd = opts.cwd ?? process.cwd();
+  const roots = (opts.mcpRoots ?? []).filter((r) => r.trim());
+  if (roots.length === 0) return cwd;
+  if (roots.length === 1) return roots[0]!;
+  const matches = roots.filter((root) => {
+    try {
+      return isPathInside(root, cwd);
+    } catch {
+      return false;
+    }
+  });
+  if (matches.length === 0) return roots[0]!;
+  matches.sort((a, b) => b.length - a.length);
+  return matches[0]!;
+}
+
 export function resolveWorkspace(opts: {
   workspace?: string;
   mcpRoots?: string[];
   config: AppConfig;
+  cwd?: string;
 }): string {
-  const candidates: string[] = [];
-  if (opts.workspace) candidates.push(opts.workspace);
-  else if (opts.mcpRoots?.length === 1) candidates.push(opts.mcpRoots[0]!);
-  else if ((opts.mcpRoots?.length ?? 0) > 1) {
-    throw new DelegateError(
-      "Multiple workspace roots are available. Pass workspace explicitly.",
-      "workspace_required",
-      false,
-    );
-  } else {
-    throw new DelegateError(
-      "workspace is required (pass workspace or configure a single MCP root)",
-      "workspace_required",
-      false,
-    );
-  }
-
-  const raw = candidates[0]!;
+  const raw = opts.workspace?.trim()
+    ? opts.workspace
+    : defaultWorkspaceFromCall({
+        mcpRoots: opts.mcpRoots,
+        cwd: opts.cwd,
+      });
   if (!existsSync(raw)) {
     throw new DelegateError(`Workspace does not exist: ${raw}`, "workspace_missing", true);
   }

@@ -53,7 +53,7 @@ Does not modify `~/.cursor/mcp.json`. Restart Cursor afterward so the MCP server
 | `send_message` | Steer a running agent (queued next turn) or start another turn when settled. |
 | `interrupt_agent` | Abort the current turn. The session remains for `send_message`. |
 
-`spawn_agent` inputs: `task_name` and `message` (required); optional `prompt`, `skills`, `agent_type`, `model`, `provider`, `effort`, `workspace`. Settings resolve per key: spawn args → `agents/*.toml` → `config.toml` `[agents]` → app defaults. **`tools` has no role default** — the template or `[agents]` must list them, or spawn fails. The parent cannot pass a tool allowlist.
+`spawn_agent` inputs: `task_name` and `message` (required); optional `prompt`, `skills`, `agent_type`, `model`, `provider`, `effort`, `workspace`. When `workspace` is omitted, the MCP client root from that call is used (several roots → the one containing the server cwd, else the first; no roots → cwd). The same default applies to `wait_*` / `list` / `read` / `send` / `interrupt`. Settings resolve per key: spawn args → `agents/*.toml` → `config.toml` `[agents]` → app defaults. **`tools` has no role default** — the template or `[agents]` must list them, or spawn fails. The parent cannot pass a tool allowlist.
 
 Cursor MCP clients time out on long blocking calls, so `wait_*` never wait forever. Default budget is `limits.waitBudgetMs` (1500ms). Poll again using the returned `wait` seconds.
 

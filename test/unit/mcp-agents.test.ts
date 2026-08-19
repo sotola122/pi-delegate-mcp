@@ -296,6 +296,57 @@ describe("send_message and interrupt", () => {
     expect(resumed.text).toBe("after-interrupt");
   });
 
+  it("keeps interrupted even if the run later reports success", async () => {
+    const ws = initRepo();
+    const home = setupHome();
+    const config = cfg(ws, home);
+    setPiExecutorForTests(
+      new FakePiExecutor(async () => {
+        await new Promise((r) => setTimeout(r, 80));
+        return { finalText: "late-success", completion: "completed" };
+      }),
+    );
+    spawnAgent({
+      config,
+      taskName: "late",
+      message: "hold",
+      agentType: "reviewer",
+      workspace: ws,
+    });
+    const stopped = await interruptAgent({
+      target: "late",
+      workspace: ws,
+      config,
+    });
+    expect(stopped.status).toBe("interrupted");
+    await new Promise((r) => setTimeout(r, 150));
+    const read = readAgentResponse({ target: "late", workspace: ws, config });
+    expect(read.status).toBe("interrupted");
+    expect(read.text).not.toBe("late-success");
+  });
+
+  it("surfaces run errors as failed with code/err", async () => {
+    const ws = initRepo();
+    const home = setupHome();
+    const config = cfg(ws, home);
+    setPiExecutorForTests(
+      new FakePiExecutor(async () => {
+        throw new DelegateError("blocked by policy", "policy_denied", false);
+      }),
+    );
+    spawnAgent({
+      config,
+      taskName: "boom",
+      message: "go",
+      agentType: "reviewer",
+      workspace: ws,
+    });
+    const done = await waitUntil("boom", ws, config, "failed");
+    expect(done.status).toBe("failed");
+    expect(done.code).toBe("policy_denied");
+    expect(done.err).toBe("blocked by policy");
+  });
+
   it("queues send_message while running", async () => {
     const ws = initRepo();
     const home = setupHome();
@@ -423,17 +474,48 @@ describe("wait_agent", () => {
   });
 });
 
+describe("call-root workspace default", () => {
+  it("spawn without workspace uses mcpRoots so wait/read find the agent", async () => {
+    const ws = initRepo();
+    const home = setupHome();
+    const config = cfg(ws, home);
+    setPiExecutorForTests(
+      new FakePiExecutor(async () => ({
+        finalText: "from-root",
+        completion: "completed",
+      })),
+    );
+    spawnAgent({
+      config,
+      taskName: "via-root",
+      message: "go",
+      agentType: "reviewer",
+      mcpRoots: [ws],
+    });
+    const done = await waitUntil("via-root", undefined, config, "completed", [ws]);
+    expect(done.text).toBe("from-root");
+    const read = readAgentResponse({
+      target: "via-root",
+      config,
+      mcpRoots: [ws],
+    });
+    expect(read.text).toBe("from-root");
+  });
+});
+
 async function waitUntil(
   name: string,
-  workspace: string,
+  workspace: string | undefined,
   config: ReturnType<typeof cfg>,
   status: string,
+  mcpRoots?: string[],
 ): Promise<Record<string, unknown>> {
   const start = Date.now();
   for (;;) {
     const rec = await waitAgent({
       config,
       workspace,
+      mcpRoots,
       targets: [name],
     });
     if (rec.status === status) return rec;

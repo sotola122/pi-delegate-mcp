@@ -11,7 +11,6 @@ import {
   getRun,
   cancelRun,
   type RunRecord,
-  type RunStatus,
 } from "./run-registry.js";
 import type { DelegateRequest } from "./delegate.js";
 import type { ThinkingLevel } from "../pi-sdk/types.js";
@@ -100,10 +99,25 @@ export function normalizeTaskName(name: string): string {
   return normalized;
 }
 
-function mapRunStatus(status: RunStatus): AgentStatus {
-  if (status === "running" || status === "queued") return "running";
-  if (status === "success" || status === "incomplete") return "completed";
-  if (status === "cancelled") return "interrupted";
+function errorFromRun(
+  run: RunRecord,
+): { code: string; message: string } | undefined {
+  if (run.error) return run.error;
+  if (run.result?.code) {
+    return {
+      code: run.result.code,
+      message: run.result.message ?? run.result.code,
+    };
+  }
+  return undefined;
+}
+
+function mapRunStatus(run: RunRecord): AgentStatus {
+  if (run.status === "running" || run.status === "queued") return "running";
+  if (run.status === "cancelled") return "interrupted";
+  if (run.status === "failed") return "failed";
+  if (run.status === "incomplete" && errorFromRun(run)) return "failed";
+  if (run.status === "success" || run.status === "incomplete") return "completed";
   return "failed";
 }
 
@@ -114,11 +128,25 @@ function isActive(status: AgentStatus): boolean {
 function syncFromRun(record: AgentRecord): AgentRecord {
   const run = getRun(record.runId);
   if (!run) return record;
-  record.status = mapRunStatus(run.status);
+  const mapped = mapRunStatus(run);
+  const keepInterrupted = record.status === "interrupted" && mapped !== "running";
+  if (keepInterrupted) {
+    record.updatedAt = run.updatedAt;
+    if (run.sessionId) record.sessionId = run.sessionId;
+    if (mapped === "interrupted") {
+      if (run.result?.output !== undefined) record.finalResponse = run.result.output;
+      const err = errorFromRun(run);
+      if (err) record.error = err;
+    }
+    persistAgent(record);
+    return record;
+  }
+  record.status = mapped;
   record.updatedAt = run.updatedAt;
   if (run.sessionId) record.sessionId = run.sessionId;
   if (run.result?.output !== undefined) record.finalResponse = run.result.output;
-  if (run.error) record.error = run.error;
+  const err = errorFromRun(run);
+  if (err) record.error = err;
   persistAgent(record);
   return record;
 }
@@ -197,6 +225,18 @@ function watchRun(record: AgentRecord, config: AppConfig): void {
   setTimeout(tick, 50);
 }
 
+function resolveScopedWorkspace(opts: {
+  workspace?: string;
+  mcpRoots?: string[];
+  config: AppConfig;
+}): string {
+  return resolveWorkspace({
+    workspace: opts.workspace,
+    mcpRoots: opts.mcpRoots,
+    config: opts.config,
+  });
+}
+
 function toRequest(
   record: AgentRecord,
   message: string,
@@ -237,18 +277,7 @@ export function spawnAgent(opts: {
   timeoutSeconds?: number;
 }): { name: string; status: AgentStatus } {
   const name = normalizeTaskName(opts.taskName);
-  let workspace: string | undefined;
-  try {
-    workspace = resolveWorkspace({
-      workspace: opts.workspace,
-      mcpRoots: opts.mcpRoots,
-      config: opts.config,
-    });
-  } catch (err) {
-    if (!(err instanceof DelegateError && err.code === "workspace_required")) {
-      throw err;
-    }
-  }
+  const workspace = resolveScopedWorkspace(opts);
 
   const existing = getAgent(name, workspace);
   if (existing && isActive(existing.status)) {
@@ -325,18 +354,7 @@ export function sendMessage(opts: {
   workspace?: string;
   mcpRoots?: string[];
 }): { name: string; status: AgentStatus } {
-  let workspace = opts.workspace;
-  if (!workspace && opts.mcpRoots?.length) {
-    try {
-      workspace = resolveWorkspace({
-        workspace: opts.workspace,
-        mcpRoots: opts.mcpRoots,
-        config: opts.config,
-      });
-    } catch {
-      // keep undefined
-    }
-  }
+  const workspace = resolveScopedWorkspace(opts);
   const record = getAgent(opts.target, workspace);
   if (!record) {
     throw new DelegateError(
@@ -360,18 +378,7 @@ export async function interruptAgent(opts: {
   mcpRoots?: string[];
   config: AppConfig;
 }): Promise<{ name: string; status: AgentStatus }> {
-  let workspace = opts.workspace;
-  if (!workspace && opts.mcpRoots?.length) {
-    try {
-      workspace = resolveWorkspace({
-        workspace: opts.workspace,
-        mcpRoots: opts.mcpRoots,
-        config: opts.config,
-      });
-    } catch {
-      // keep undefined
-    }
-  }
+  const workspace = resolveScopedWorkspace(opts);
   const record = getAgent(opts.target, workspace);
   if (!record) {
     throw new DelegateError(
@@ -409,7 +416,10 @@ function compactAgent(record: AgentRecord, includeText: boolean): Record<string,
     name: record.name,
     status: record.status,
   };
-  if (record.error) out.err = record.error.code;
+  if (record.error) {
+    out.code = record.error.code;
+    out.err = record.error.message;
+  }
   if (!includeText || record.finalResponse === undefined) return out;
   const fullPath = join(runsDir(), record.runId, "result", "output.md");
   const { text, full } = compactTextField(record.finalResponse, fullPath);
@@ -424,18 +434,7 @@ export async function waitAgent(opts: {
   mcpRoots?: string[];
   targets?: string[];
 }): Promise<Record<string, unknown>> {
-  let workspace = opts.workspace;
-  if (!workspace && opts.mcpRoots?.length) {
-    try {
-      workspace = resolveWorkspace({
-        workspace: opts.workspace,
-        mcpRoots: opts.mcpRoots,
-        config: opts.config,
-      });
-    } catch {
-      // keep undefined
-    }
-  }
+  const workspace = resolveScopedWorkspace(opts);
   const budget = opts.config.limits.waitBudgetMs;
   const deadline = Date.now() + budget;
   const names = opts.targets?.map(normalizeTaskName);
@@ -481,18 +480,7 @@ export async function waitAllAgents(opts: {
   mcpRoots?: string[];
   targets?: string[];
 }): Promise<Record<string, unknown>> {
-  let workspace = opts.workspace;
-  if (!workspace && opts.mcpRoots?.length) {
-    try {
-      workspace = resolveWorkspace({
-        workspace: opts.workspace,
-        mcpRoots: opts.mcpRoots,
-        config: opts.config,
-      });
-    } catch {
-      // keep undefined
-    }
-  }
+  const workspace = resolveScopedWorkspace(opts);
   const budget = opts.config.limits.waitBudgetMs;
   const deadline = Date.now() + budget;
   const names = opts.targets?.map(normalizeTaskName);
@@ -544,18 +532,7 @@ export function readAgentResponse(opts: {
   mcpRoots?: string[];
   config: AppConfig;
 }): Record<string, unknown> {
-  let workspace = opts.workspace;
-  if (!workspace && opts.mcpRoots?.length) {
-    try {
-      workspace = resolveWorkspace({
-        workspace: opts.workspace,
-        mcpRoots: opts.mcpRoots,
-        config: opts.config,
-      });
-    } catch {
-      // keep undefined
-    }
-  }
+  const workspace = resolveScopedWorkspace(opts);
   const record = getAgent(opts.target, workspace);
   if (!record) {
     throw new DelegateError(
@@ -574,18 +551,7 @@ export function listAgentsPublic(opts: {
   pathPrefix?: string;
   config: AppConfig;
 }): Record<string, unknown> {
-  let workspace = opts.workspace;
-  if (!workspace && opts.mcpRoots?.length) {
-    try {
-      workspace = resolveWorkspace({
-        workspace: opts.workspace,
-        mcpRoots: opts.mcpRoots,
-        config: opts.config,
-      });
-    } catch {
-      // keep undefined
-    }
-  }
+  const workspace = resolveScopedWorkspace(opts);
   const agents = listAgents({
     workspace,
     pathPrefix: opts.pathPrefix,
